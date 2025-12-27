@@ -100,6 +100,16 @@ export default function App() {
   const handlePlayerStartSession = () => {
     sounds.transition();
 
+    // Ensure players have gameMode and contentPack (in real app, these would be synced from host)
+    // For demo, use defaults if not set
+    if (!gameMode) {
+      setGameMode('pop-quiz'); // Default game mode
+    }
+    if (!contentPack) {
+      const pack = selectContentPack('');
+      setContentPack(pack);
+    }
+
     const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
     const teamNames = Array.from({ length: numTeams }, (_, i) => `Team ${i + 1}`);
     const teams = teamNames.map((team, idx) => ({
@@ -130,6 +140,15 @@ export default function App() {
 
   const handleLeaderboardContinue = () => {
     sounds.gameStart();
+    // Ensure gameMode and contentPack are set before starting game
+    // (in real app, these would be synced from host)
+    if (!gameMode) {
+      setGameMode('pop-quiz'); // Default game mode
+    }
+    if (!contentPack) {
+      const pack = selectContentPack('');
+      setContentPack(pack);
+    }
     setView('game');
   };
 
@@ -667,7 +686,7 @@ export default function App() {
         )}
 
         {view === 'team-naming' && teamData.length > 0 && (
-          <TeamNaming teams={teamData} onComplete={handleTeamNamingComplete} />
+          <TeamNaming teams={teamData} onComplete={handleTeamNamingComplete} username={username} isHost={isHost} existingTeamNames={customTeamNames} />
         )}
 
         {view === 'group-pulse' && (
