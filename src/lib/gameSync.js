@@ -1,5 +1,4 @@
 import { supabase } from './supabase';
-import { RealtimeChannel } from '@supabase/supabase-js';
 
 /**
  * Game Sync Service
