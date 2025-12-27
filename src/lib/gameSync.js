@@ -19,6 +19,11 @@ export class GameSync {
    */
   async initialize() {
     try {
+      // Check if Supabase is properly configured
+      if (!supabase) {
+        throw new Error('Supabase client not initialized');
+      }
+
       // Get room ID from code
       const { data: room, error: roomError } = await supabase
         .from('rooms')
@@ -27,31 +32,37 @@ export class GameSync {
         .single();
 
       if (roomError || !room) {
-        throw new Error('Room not found');
+        // Don't throw - just return error so app can continue
+        return { success: false, error: 'Room not found' };
       }
 
       this.roomId = room.id;
 
-      // Subscribe to real-time updates
-      this.channel = supabase
-        .channel(`room:${this.roomId}`)
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            filter: `room_id=eq.${this.roomId}`,
-          },
-          (payload) => {
-            this.handleRealtimeUpdate(payload);
-          }
-        )
-        .subscribe();
+      // Subscribe to real-time updates (only if Supabase is configured)
+      try {
+        this.channel = supabase
+          .channel(`room:${this.roomId}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              filter: `room_id=eq.${this.roomId}`,
+            },
+            (payload) => {
+              this.handleRealtimeUpdate(payload);
+            }
+          )
+          .subscribe();
+      } catch (realtimeError) {
+        console.warn('Realtime subscription failed (this is OK if Supabase is not configured):', realtimeError);
+        // Continue without realtime - app will still work
+      }
 
       return { success: true, roomId: this.roomId };
     } catch (error) {
       console.error('GameSync initialization error:', error);
-      return { success: false, error: error.message };
+      return { success: false, error: error.message || 'Failed to initialize' };
     }
   }
 

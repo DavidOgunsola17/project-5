@@ -11,39 +11,18 @@ export function useGameRoom(roomCode, userId, username, isHost) {
   const [teams, setTeams] = useState([]);
   const [gameState, setGameState] = useState(null);
   const [scores, setScores] = useState({});
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // Start as false since we only load when we have room info
   const [error, setError] = useState(null);
 
   const gameSyncRef = useRef(null);
 
-  // Initialize game sync
-  useEffect(() => {
-    if (!roomCode || !userId || !username) return;
-
-    const sync = new GameSync(roomCode, userId, username);
-    gameSyncRef.current = sync;
-
-    sync.initialize().then((result) => {
-      if (result.success) {
-        loadInitialData();
-      } else {
-        setError(result.error);
-        setLoading(false);
-      }
-    });
-
-    return () => {
-      if (gameSyncRef.current) {
-        gameSyncRef.current.disconnect();
-      }
-    };
-  }, [roomCode, userId, username]);
-
-  // Load initial data
-  const loadInitialData = async () => {
+  // Load initial data function
+  const loadInitialData = useCallback(async () => {
     try {
       const sync = gameSyncRef.current;
       if (!sync) return;
+
+      setLoading(true);
 
       // Load room
       const { data: roomData } = await sync.getRoom();
@@ -73,10 +52,54 @@ export function useGameRoom(roomCode, userId, username, isHost) {
 
       setLoading(false);
     } catch (err) {
+      console.error('Error loading initial data:', err);
       setError(err.message);
       setLoading(false);
     }
-  };
+  }, []);
+
+  // Initialize game sync
+  useEffect(() => {
+    if (!roomCode || !userId || !username) {
+      // Reset state when room info is cleared
+      setRoom(null);
+      setPlayers([]);
+      setTeams([]);
+      setGameState(null);
+      setScores({});
+      setError(null);
+      setLoading(false);
+      if (gameSyncRef.current) {
+        gameSyncRef.current.disconnect();
+        gameSyncRef.current = null;
+      }
+      return;
+    }
+
+    setLoading(true);
+    const sync = new GameSync(roomCode, userId, username);
+    gameSyncRef.current = sync;
+
+    sync.initialize().then((result) => {
+      if (result.success) {
+        loadInitialData();
+      } else {
+        setError(result.error);
+        setLoading(false);
+      }
+    }).catch((err) => {
+      console.error('Error initializing game sync:', err);
+      setError(err.message);
+      setLoading(false);
+    });
+
+    return () => {
+      if (gameSyncRef.current) {
+        gameSyncRef.current.disconnect();
+        gameSyncRef.current = null;
+      }
+    };
+  }, [roomCode, userId, username, loadInitialData]);
 
   // Subscribe to real-time updates
   useEffect(() => {
