@@ -19,7 +19,7 @@ export default function App() {
   const [username, setUsername] = useState('');
   const [roomCode, setRoomCode] = useState('');
   const [players, setPlayers] = useState([]);
-  const [numTeams, setNumTeams] = useState(3);
+  const [teamSize, setTeamSize] = useState(4);
   const [targetScore, setTargetScore] = useState(5);
   const [assignedTeam, setAssignedTeam] = useState(null);
   const [topicInput, setTopicInput] = useState('');
@@ -36,6 +36,11 @@ export default function App() {
     const names = ['Alex', 'Jordan', 'Sam', 'Taylor', 'Morgan', 'Casey', 'Riley', 'Avery',
                    'Quinn', 'Jamie', 'Skyler', 'Dakota', 'Charlie', 'Finley', 'Reese'];
     return names.slice(0, count);
+  };
+
+  // Calculate number of teams based on team size and number of players
+  const calculateNumTeams = (playerCount, size) => {
+    return Math.max(2, Math.ceil(playerCount / size));
   };
 
   const handleHostGame = () => {
@@ -85,11 +90,12 @@ export default function App() {
     const simulatedPlayers = generatePlayerNames(12);
     setPlayers(simulatedPlayers);
 
+    const calculatedNumTeams = calculateNumTeams(simulatedPlayers.length, teamSize);
     const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
-    const teamNames = Array.from({ length: numTeams }, (_, i) => `Team ${i + 1}`);
+    const teamNames = Array.from({ length: calculatedNumTeams }, (_, i) => `Team ${i + 1}`);
     const teams = teamNames.map((team, idx) => ({
       name: team,
-      players: simulatedPlayers.filter((_, i) => i % numTeams === idx),
+      players: simulatedPlayers.filter((_, i) => i % calculatedNumTeams === idx),
       color: TEAM_COLORS[idx % TEAM_COLORS.length],
     }));
 
@@ -110,11 +116,12 @@ export default function App() {
       setContentPack(pack);
     }
 
+    const calculatedNumTeams = calculateNumTeams(players.length, teamSize);
     const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
-    const teamNames = Array.from({ length: numTeams }, (_, i) => `Team ${i + 1}`);
+    const teamNames = Array.from({ length: calculatedNumTeams }, (_, i) => `Team ${i + 1}`);
     const teams = teamNames.map((team, idx) => ({
       name: team,
-      players: players.filter((_, i) => i % numTeams === idx),
+      players: players.filter((_, i) => i % calculatedNumTeams === idx),
       color: TEAM_COLORS[idx % TEAM_COLORS.length],
     }));
 
@@ -176,10 +183,13 @@ export default function App() {
   const renderGame = () => {
     if (!gameMode || !contentPack) return null;
 
+    // Calculate numTeams based on team size and current player count
+    const calculatedNumTeams = calculateNumTeams(players.length, teamSize);
+
     const props = {
       isHost,
       numPlayers: players.length,
-      numTeams,
+      numTeams: calculatedNumTeams,
       targetScore,
       username,
       roomCode,
@@ -523,23 +533,23 @@ export default function App() {
 
                 <div>
                   <label className="block text-sm font-bold text-gray-900 mb-3 uppercase tracking-wide">
-                    Number of Teams
+                    Team Size: {teamSize} players per team
                   </label>
-                  <div className="flex gap-2">
-                    {[2, 3, 4].map((n) => (
-                      <button
-                        key={n}
-                        onClick={() => { sounds.tap(); setNumTeams(n); }}
-                        className={`flex-1 py-3 rounded-xl font-bold transition ${
-                          numTeams === n
-                            ? 'bg-gray-900 text-white'
-                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                        }`}
-                      >
-                        {n} Teams
-                      </button>
-                    ))}
+                  <input
+                    type="range"
+                    min="2"
+                    max="8"
+                    value={teamSize}
+                    onChange={(e) => setTeamSize(parseInt(e.target.value))}
+                    className="w-full accent-gray-900"
+                  />
+                  <div className="flex justify-between text-xs text-gray-600 mt-2 font-semibold">
+                    <span>Small (2)</span>
+                    <span>Large (8)</span>
                   </div>
+                  <p className="text-xs text-gray-500 mt-2 text-center font-medium">
+                    Teams will be formed automatically based on team size
+                  </p>
                 </div>
 
                 <div>
