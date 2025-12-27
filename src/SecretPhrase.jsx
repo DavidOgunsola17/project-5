@@ -5,7 +5,7 @@ import { Card } from './components/Card';
 
 const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
 
-export default function SecretPhrase({ isHost, numPlayers, numTeams, targetScore, username, roomCode, contentPack, topicName, onEnd, customTeamNames = {} }) {
+export default function SecretPhrase({ isHost, numPlayers, numTeams, targetScore, username, roomCode, contentPack, topicName, onEnd, customTeamNames = {}, gameSync, userId, roomId, teams: propTeams, scores: propScores }) {
   const [gameState, setGameState] = useState('starting');
   const [teams, setTeams] = useState([]);
   const [scores, setScores] = useState({});
@@ -19,32 +19,42 @@ export default function SecretPhrase({ isHost, numPlayers, numTeams, targetScore
   const [recentGuesses, setRecentGuesses] = useState([]);
 
   useEffect(() => {
-    const teamNames = Array.from({ length: numTeams }, (_, i) => `Team ${i + 1}`);
-    const playerNames = Array.from({ length: numPlayers }, (_, i) =>
-      i === 0 && username ? username : `Player ${i + 1}`
-    );
+    // Use teams from props if available (from backend), otherwise create mock teams
+    if (propTeams && propTeams.length > 0) {
+      setTeams(propTeams);
+      const userTeam = propTeams.find(t => t.players.includes(username));
+      setMyTeam(userTeam);
+    } else {
+      const teamNames = Array.from({ length: numTeams }, (_, i) => `Team ${i + 1}`);
+      const playerNames = Array.from({ length: numPlayers }, (_, i) =>
+        i === 0 && username ? username : `Player ${i + 1}`
+      );
 
-    const teamAssignments = teamNames.map((team, idx) => ({
-      name: customTeamNames[team] || team,
-      originalName: team,
-      players: playerNames.filter((_, i) => i % numTeams === idx),
-      color: TEAM_COLORS[idx % TEAM_COLORS.length],
-    }));
+      const teamAssignments = teamNames.map((team, idx) => ({
+        name: customTeamNames[team] || team,
+        originalName: team,
+        players: playerNames.filter((_, i) => i % numTeams === idx),
+        color: TEAM_COLORS[idx % TEAM_COLORS.length],
+      }));
 
-    setTeams(teamAssignments);
+      setTeams(teamAssignments);
+      const userTeam = teamAssignments.find(t => t.players.includes(username || 'Player 1'));
+      setMyTeam(userTeam);
+    }
 
-    const initialScores = {};
-    teamAssignments.forEach(team => initialScores[team.name] = 0);
-    setScores(initialScores);
-
-    const userTeam = teamAssignments.find(t => t.players.includes(username || 'Player 1'));
-    setMyTeam(userTeam);
+    if (propScores) {
+      setScores(propScores);
+    } else {
+      const initialScores = {};
+      teams.forEach(team => initialScores[team.name] = 0);
+      setScores(initialScores);
+    }
 
     setTimeout(() => {
       setGameState('playing');
-      startNewRound(teamAssignments);
+      startNewRound(teams);
     }, 2000);
-  }, []);
+  }, [propTeams, propScores]);
 
   const startNewRound = (teamList = teams) => {
     const phrases = contentPack?.secretPhrases || [];
@@ -83,20 +93,48 @@ export default function SecretPhrase({ isHost, numPlayers, numTeams, targetScore
     }
   }, [timeLeft, gameState, currentClueIndex, currentPhrase]);
 
-  const handleGuess = () => {
+  const handleGuess = async () => {
     if (!guessInput.trim()) return;
 
     const guess = guessInput.trim().toUpperCase();
     const correct = guess === currentPhrase.phrase.toUpperCase();
 
+    // Submit guess to backend
+    if (gameSync && userId && currentPhrase) {
+      await gameSync.submitSecretPhraseGuess(
+        roundNumber,
+        currentPhrase.phrase,
+        guess
+      );
+    }
+
     if (correct) {
+      // Update score in backend
+      if (gameSync && myTeam && myTeam.id) {
+        await gameSync.updateTeamScore(myTeam.id, 1);
+      }
+      
       const newScores = { ...scores };
-      newScores[myTeam.name]++;
+      if (myTeam) {
+        newScores[myTeam.name] = (newScores[myTeam.name] || 0) + 1;
+      }
       setScores(newScores);
       endRound(true);
     } else {
       setRecentGuesses([...recentGuesses, { player: username, guess }]);
       setGuessInput('');
+      
+      // Load recent guesses from backend
+      if (gameSync) {
+        const { data: guesses } = await gameSync.getSecretPhraseGuesses(roundNumber);
+        if (guesses) {
+          const formatted = guesses.map(g => ({
+            player: g.players?.username || 'Unknown',
+            guess: g.guess,
+          }));
+          setRecentGuesses(formatted.slice(-5).reverse());
+        }
+      }
     }
   };
 

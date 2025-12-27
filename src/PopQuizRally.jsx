@@ -5,11 +5,11 @@ import { Card } from './components/Card';
 
 const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
 
-export default function PopQuizRally({ isHost, numPlayers, numTeams, targetScore, username, roomCode, contentPack, topicName, onEnd, customTeamNames = {} }) {
+export default function PopQuizRally({ isHost, numPlayers, numTeams, targetScore, username, roomCode, contentPack, topicName, onEnd, customTeamNames = {}, gameSync, userId, roomId, teams: propTeams, scores: propScores }) {
   const [gameState, setGameState] = useState('starting');
   const [currentRound, setCurrentRound] = useState(0);
-  const [teams, setTeams] = useState([]);
-  const [scores, setScores] = useState({});
+  const [teams, setTeams] = useState(propTeams || []);
+  const [scores, setScores] = useState(propScores || {});
   const [myTeam, setMyTeam] = useState(null);
   const [currentQuestion, setCurrentQuestion] = useState(null);
   const [selectedAnswer, setSelectedAnswer] = useState(null);
@@ -19,34 +19,71 @@ export default function PopQuizRally({ isHost, numPlayers, numTeams, targetScore
   const [roundAnswers, setRoundAnswers] = useState([]);
 
   useEffect(() => {
-    const teamNames = Array.from({ length: numTeams }, (_, i) => `Team ${i + 1}`);
-    const playerNames = Array.from({ length: numPlayers }, (_, i) =>
-      i === 0 && username ? username : `Player ${i + 1}`
-    );
+    // Use teams from props if available (from backend), otherwise create mock teams
+    if (propTeams && propTeams.length > 0) {
+      setTeams(propTeams);
+      const userTeam = propTeams.find(t => t.players.includes(username));
+      setMyTeam(userTeam);
+    } else {
+      const teamNames = Array.from({ length: numTeams }, (_, i) => `Team ${i + 1}`);
+      const playerNames = Array.from({ length: numPlayers }, (_, i) =>
+        i === 0 && username ? username : `Player ${i + 1}`
+      );
 
-    const teamAssignments = teamNames.map((team, idx) => ({
-      name: customTeamNames[team] || team,
-      originalName: team,
-      players: playerNames.filter((_, i) => i % numTeams === idx),
-      color: TEAM_COLORS[idx % TEAM_COLORS.length],
-    }));
+      const teamAssignments = teamNames.map((team, idx) => ({
+        name: customTeamNames[team] || team,
+        originalName: team,
+        players: playerNames.filter((_, i) => i % numTeams === idx),
+        color: TEAM_COLORS[idx % TEAM_COLORS.length],
+      }));
 
-    setTeams(teamAssignments);
+      setTeams(teamAssignments);
+      const userTeam = teamAssignments.find(t => t.players.includes(username || 'Player 1'));
+      setMyTeam(userTeam);
+    }
 
-    const initialScores = {};
-    teamAssignments.forEach(team => initialScores[team.name] = 0);
-    setScores(initialScores);
+    if (propScores) {
+      setScores(propScores);
+    } else {
+      const initialScores = {};
+      teams.forEach(team => initialScores[team.name] = 0);
+      setScores(initialScores);
+    }
 
-    const userTeam = teamAssignments.find(t => t.players.includes(username || 'Player 1'));
-    setMyTeam(userTeam);
+    // Load game state from backend if available
+    if (gameSync && roomId) {
+      loadGameState();
+    } else {
+      setTimeout(() => {
+        setGameState('playing');
+        startRound();
+      }, 2000);
+    }
+  }, [propTeams, propScores]);
 
-    setTimeout(() => {
-      setGameState('playing');
-      startRound();
-    }, 2000);
-  }, []);
+  const loadGameState = async () => {
+    if (!gameSync) return;
+    
+    const { data: state } = await gameSync.getGameState();
+    if (state) {
+      setCurrentRound(state.current_round || 0);
+      if (state.current_question) {
+        setCurrentQuestion(state.current_question);
+      }
+      setGameState(state.status || 'starting');
+      
+      if (state.status === 'playing') {
+        startRound();
+      }
+    } else {
+      setTimeout(() => {
+        setGameState('playing');
+        startRound();
+      }, 2000);
+    }
+  };
 
-  const startRound = () => {
+  const startRound = async () => {
     if (currentRound >= targetScore * 2) {
       endGame();
       return;
@@ -60,6 +97,18 @@ export default function PopQuizRally({ isHost, numPlayers, numTeams, targetScore
     setShowResults(false);
     setTimeLeft(10);
     setRoundAnswers([]);
+
+    // Update game state in backend (host only)
+    if (isHost && gameSync && roomId) {
+      await gameSync.updateGameState({
+        current_round: currentRound,
+        current_question_index: currentRound % questions.length,
+        current_question: question,
+        time_left: 10,
+        status: 'playing',
+        round_started_at: new Date().toISOString(),
+      });
+    }
   };
 
   useEffect(() => {
@@ -71,45 +120,81 @@ export default function PopQuizRally({ isHost, numPlayers, numTeams, targetScore
     }
   }, [timeLeft, gameState, showResults]);
 
-  const submitAnswer = () => {
+  const submitAnswer = async () => {
     if (!currentQuestion || showResults) return;
 
     const correct = selectedAnswer === currentQuestion.correct;
     setAnsweredCorrectly(correct);
 
-    const simulatedAnswers = teams.flatMap(team =>
-      team.players.map(player => ({
-        player,
-        team: team.name,
-        correct: player === username ? correct : Math.random() > 0.4,
-      }))
-    );
+    // Submit answer to backend
+    if (gameSync && userId && currentQuestion) {
+      await gameSync.submitPopQuizAnswer(
+        currentRound,
+        currentRound % (contentPack?.popQuizQuestions?.length || 1),
+        selectedAnswer !== null ? selectedAnswer : -1,
+        correct
+      );
+    }
 
-    setRoundAnswers(simulatedAnswers);
+    // Load all answers from backend (for results display)
+    if (gameSync) {
+      const { data: allAnswers } = await gameSync.getPopQuizAnswers(currentRound);
+      if (allAnswers) {
+        const formattedAnswers = allAnswers.map(a => ({
+          player: a.players?.username || 'Unknown',
+          team: a.teams?.custom_name || a.teams?.original_name || 'Unknown',
+          correct: a.is_correct,
+        }));
+        setRoundAnswers(formattedAnswers);
 
-    const newScores = { ...scores };
-    simulatedAnswers.forEach(ans => {
-      if (ans.correct) {
-        newScores[ans.team]++;
+        // Calculate scores from backend answers
+        const newScores = { ...scores };
+        formattedAnswers.forEach(ans => {
+          if (ans.correct) {
+            newScores[ans.team] = (newScores[ans.team] || 0) + 1;
+          }
+        });
+        setScores(newScores);
       }
-    });
-    setScores(newScores);
+    } else {
+      // Fallback to simulated answers
+      const simulatedAnswers = teams.flatMap(team =>
+        team.players.map(player => ({
+          player,
+          team: team.name,
+          correct: player === username ? correct : Math.random() > 0.4,
+        }))
+      );
+      setRoundAnswers(simulatedAnswers);
+
+      const newScores = { ...scores };
+      simulatedAnswers.forEach(ans => {
+        if (ans.correct) {
+          newScores[ans.team] = (newScores[ans.team] || 0) + 1;
+        }
+      });
+      setScores(newScores);
+    }
 
     setShowResults(true);
 
-    setTimeout(() => {
+    setTimeout(async () => {
       setCurrentRound(prev => prev + 1);
-      const hasWinner = Object.values(newScores).some(score => score >= targetScore);
+      const hasWinner = Object.values(scores).some(score => score >= targetScore);
       if (hasWinner || currentRound >= targetScore * 2) {
         setTimeout(() => endGame(), 1000);
       } else {
-        startRound();
+        await startRound();
       }
     }, 3000);
   };
 
-  const endGame = () => {
+  const endGame = async () => {
     setGameState('ended');
+    // Update game state in backend
+    if (gameSync && roomId) {
+      await gameSync.updateGameState({ status: 'ended' });
+    }
   };
 
   const getWinningTeam = () => {

@@ -5,7 +5,7 @@ import { Card } from './components/Card';
 
 const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
 
-export default function Sync({ isHost, numPlayers, numTeams, targetScore, username, roomCode, contentPack, topicName, onEnd, customTeamNames = {} }) {
+export default function Sync({ isHost, numPlayers, numTeams, targetScore, username, roomCode, contentPack, topicName, onEnd, customTeamNames = {}, gameSync, userId, roomId, teams: propTeams, scores: propScores }) {
   const [gameState, setGameState] = useState('starting');
   const [currentRound, setCurrentRound] = useState(0);
   const [teams, setTeams] = useState([]);
@@ -19,32 +19,42 @@ export default function Sync({ isHost, numPlayers, numTeams, targetScore, userna
   const [roundResults, setRoundResults] = useState(null);
 
   useEffect(() => {
-    const teamNames = Array.from({ length: numTeams }, (_, i) => `Team ${i + 1}`);
-    const playerNames = Array.from({ length: numPlayers }, (_, i) =>
-      i === 0 && username ? username : `Player ${i + 1}`
-    );
+    // Use teams from props if available (from backend), otherwise create mock teams
+    if (propTeams && propTeams.length > 0) {
+      setTeams(propTeams);
+      const userTeam = propTeams.find(t => t.players.includes(username));
+      setMyTeam(userTeam);
+    } else {
+      const teamNames = Array.from({ length: numTeams }, (_, i) => `Team ${i + 1}`);
+      const playerNames = Array.from({ length: numPlayers }, (_, i) =>
+        i === 0 && username ? username : `Player ${i + 1}`
+      );
 
-    const teamAssignments = teamNames.map((team, idx) => ({
-      name: customTeamNames[team] || team,
-      originalName: team,
-      players: playerNames.filter((_, i) => i % numTeams === idx),
-      color: TEAM_COLORS[idx % TEAM_COLORS.length],
-    }));
+      const teamAssignments = teamNames.map((team, idx) => ({
+        name: customTeamNames[team] || team,
+        originalName: team,
+        players: playerNames.filter((_, i) => i % numTeams === idx),
+        color: TEAM_COLORS[idx % TEAM_COLORS.length],
+      }));
 
-    setTeams(teamAssignments);
+      setTeams(teamAssignments);
+      const userTeam = teamAssignments.find(t => t.players.includes(username || 'Player 1'));
+      setMyTeam(userTeam);
+    }
 
-    const initialScores = {};
-    teamAssignments.forEach(team => initialScores[team.name] = 0);
-    setScores(initialScores);
-
-    const userTeam = teamAssignments.find(t => t.players.includes(username || 'Player 1'));
-    setMyTeam(userTeam);
+    if (propScores) {
+      setScores(propScores);
+    } else {
+      const initialScores = {};
+      teams.forEach(team => initialScores[team.name] = 0);
+      setScores(initialScores);
+    }
 
     setTimeout(() => {
       setGameState('playing');
-      startRound(teamAssignments);
+      startRound(teams);
     }, 2000);
-  }, []);
+  }, [propTeams, propScores]);
 
   const startRound = (teamList = teams) => {
     const questions = contentPack?.syncQuestions || [];
@@ -65,60 +75,124 @@ export default function Sync({ isHost, numPlayers, numTeams, targetScore, userna
     }
   }, [timeLeft, gameState, showResults]);
 
-  const lockAnswer = () => {
+  const lockAnswer = async () => {
     if (hasLocked) return;
     setHasLocked(true);
 
-    const simulatedAnswers = teams.flatMap(team =>
-      team.players.map(player => {
-        if (player === username) {
-          return { player, team: team.name, answer: selectedAnswer !== null ? selectedAnswer : Math.floor(Math.random() * 4) };
+    // Submit answer to backend
+    if (gameSync && userId && currentQuestion && selectedAnswer !== null) {
+      await gameSync.submitSyncAnswer(
+        currentRound,
+        currentRound % (contentPack?.syncQuestions?.length || 1),
+        selectedAnswer
+      );
+    }
+
+    // Wait a bit for all players to submit, then calculate results
+    setTimeout(async () => {
+      let teamResults = [];
+
+      if (gameSync) {
+        // Load all answers from backend
+        const { data: allAnswers } = await gameSync.getSyncAnswers(currentRound);
+        
+        if (allAnswers && allAnswers.length > 0) {
+          // Group by team
+          const teamAnswers = {};
+          allAnswers.forEach(a => {
+            const teamName = a.teams?.custom_name || a.teams?.original_name || 'Unknown';
+            if (!teamAnswers[teamName]) {
+              teamAnswers[teamName] = [];
+            }
+            teamAnswers[teamName].push(a.selected_answer);
+          });
+
+          // Calculate alignment for each team
+          teamResults = Object.entries(teamAnswers).map(([teamName, answers]) => {
+            const answerCounts = [0, 0, 0, 0];
+            answers.forEach(ans => {
+              if (ans >= 0 && ans < 4) answerCounts[ans]++;
+            });
+            const majorityAnswer = answerCounts.indexOf(Math.max(...answerCounts));
+            const majorityCount = Math.max(...answerCounts);
+            const alignmentScore = Math.floor((majorityCount / answers.length) * 100);
+            const pointsEarned = alignmentScore >= 50 ? 1 : 0;
+
+            return {
+              team: teamName,
+              answers: answerCounts,
+              majorityAnswer,
+              majorityCount,
+              totalPlayers: answers.length,
+              alignmentScore,
+              pointsEarned,
+            };
+          });
+
+          // Update scores in backend
+          for (const result of teamResults) {
+            if (result.pointsEarned > 0) {
+              const team = teams.find(t => (t.custom_name || t.original_name) === result.team);
+              if (team) {
+                await gameSync.updateTeamScore(team.id, result.pointsEarned);
+              }
+            }
+          }
         }
-        const teamBias = Math.floor(Math.random() * 4);
-        const answer = Math.random() > 0.3 ? teamBias : Math.floor(Math.random() * 4);
-        return { player, team: team.name, answer };
-      })
-    );
-
-    const teamResults = teams.map(team => {
-      const teamAnswers = simulatedAnswers.filter(a => a.team === team.name);
-      const answerCounts = [0, 0, 0, 0];
-      teamAnswers.forEach(a => answerCounts[a.answer]++);
-      const majorityAnswer = answerCounts.indexOf(Math.max(...answerCounts));
-      const majorityCount = Math.max(...answerCounts);
-      const alignmentScore = Math.floor((majorityCount / teamAnswers.length) * 100);
-      const pointsEarned = alignmentScore >= 50 ? 1 : 0;
-
-      return {
-        team: team.name,
-        answers: answerCounts,
-        majorityAnswer,
-        majorityCount,
-        totalPlayers: teamAnswers.length,
-        alignmentScore,
-        pointsEarned,
-      };
-    });
-
-    setRoundResults(teamResults);
-
-    const newScores = { ...scores };
-    teamResults.forEach(result => {
-      newScores[result.team] += result.pointsEarned;
-    });
-    setScores(newScores);
-
-    setShowResults(true);
-
-    setTimeout(() => {
-      const maxScore = Math.max(...Object.values(newScores));
-      if (maxScore >= targetScore) {
-        setGameState('ended');
       } else {
-        setCurrentRound(prev => prev + 1);
-        startRound();
+        // Fallback to simulated answers
+        const simulatedAnswers = teams.flatMap(team =>
+          team.players.map(player => {
+            if (player === username) {
+              return { player, team: team.name, answer: selectedAnswer !== null ? selectedAnswer : Math.floor(Math.random() * 4) };
+            }
+            const teamBias = Math.floor(Math.random() * 4);
+            const answer = Math.random() > 0.3 ? teamBias : Math.floor(Math.random() * 4);
+            return { player, team: team.name, answer };
+          })
+        );
+
+        teamResults = teams.map(team => {
+          const teamAnswers = simulatedAnswers.filter(a => a.team === team.name);
+          const answerCounts = [0, 0, 0, 0];
+          teamAnswers.forEach(a => answerCounts[a.answer]++);
+          const majorityAnswer = answerCounts.indexOf(Math.max(...answerCounts));
+          const majorityCount = Math.max(...answerCounts);
+          const alignmentScore = Math.floor((majorityCount / teamAnswers.length) * 100);
+          const pointsEarned = alignmentScore >= 50 ? 1 : 0;
+
+          return {
+            team: team.name,
+            answers: answerCounts,
+            majorityAnswer,
+            majorityCount,
+            totalPlayers: teamAnswers.length,
+            alignmentScore,
+            pointsEarned,
+          };
+        });
       }
-    }, 5000);
+
+      setRoundResults(teamResults);
+
+      const newScores = { ...scores };
+      teamResults.forEach(result => {
+        newScores[result.team] = (newScores[result.team] || 0) + result.pointsEarned;
+      });
+      setScores(newScores);
+
+      setShowResults(true);
+
+      setTimeout(() => {
+        const maxScore = Math.max(...Object.values(newScores));
+        if (maxScore >= targetScore) {
+          setGameState('ended');
+        } else {
+          setCurrentRound(prev => prev + 1);
+          startRound();
+        }
+      }, 5000);
+    }, 2000); // Wait 2 seconds for all players to submit
   };
 
   const getWinningTeam = () => {

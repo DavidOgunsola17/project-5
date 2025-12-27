@@ -19,21 +19,28 @@ const PULSE_QUESTIONS = [
   },
 ];
 
-export function GroupPulse({ onComplete }) {
+export function GroupPulse({ onComplete, gameSync, userId }) {
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [answers, setAnswers] = useState([]);
   const [selectedOption, setSelectedOption] = useState(null);
   const [showResults, setShowResults] = useState(false);
+  const [aggregateResults, setAggregateResults] = useState(null);
 
   const handleAnswer = (optionIndex) => {
     sounds.tap();
     setSelectedOption(optionIndex);
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (selectedOption === null) return;
 
     sounds.success();
+    
+    // Save answer to backend
+    if (gameSync && userId) {
+      await gameSync.submitGroupPulseAnswer(currentQuestion, selectedOption);
+    }
+    
     const newAnswers = [...answers, selectedOption];
     setAnswers(newAnswers);
     setSelectedOption(null);
@@ -44,6 +51,24 @@ export function GroupPulse({ onComplete }) {
         setCurrentQuestion(currentQuestion + 1);
       }, 300);
     } else {
+      // Load aggregate results
+      if (gameSync) {
+        const { data } = await gameSync.getGroupPulseResults();
+        if (data) {
+          // Calculate aggregate results
+          const results = PULSE_QUESTIONS.map((q, qIdx) => {
+            const questionAnswers = data.filter(a => a.question_index === qIdx);
+            const counts = [0, 0, 0, 0];
+            questionAnswers.forEach(a => {
+              if (a.answer_index >= 0 && a.answer_index < 4) {
+                counts[a.answer_index]++;
+              }
+            });
+            return counts;
+          });
+          setAggregateResults(results);
+        }
+      }
       setTimeout(() => {
         setShowResults(true);
       }, 300);
@@ -77,28 +102,44 @@ export function GroupPulse({ onComplete }) {
           </p>
 
           <div className="space-y-4 mb-8">
-            {PULSE_QUESTIONS.map((q, idx) => (
-              <motion.div
-                key={idx}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.3 + idx * 0.1 }}
-                className="bg-white rounded-xl p-4"
-              >
-                <p className="font-bold text-gray-900 text-sm mb-2">{q.question}</p>
-                <div className="flex gap-2">
-                  {q.options.map((option, optIdx) => (
-                    <div
-                      key={optIdx}
-                      className={`flex-1 h-2 rounded-full ${
-                        optIdx === 2 ? 'bg-gray-900' : 'bg-gray-300'
-                      }`}
-                    />
-                  ))}
-                </div>
-                <p className="text-xs text-gray-600 mt-2 font-medium">Group responses aggregated</p>
-              </motion.div>
-            ))}
+            {PULSE_QUESTIONS.map((q, idx) => {
+              const counts = aggregateResults?.[idx] || [0, 0, 0, 0];
+              const total = counts.reduce((a, b) => a + b, 0);
+              const maxCount = Math.max(...counts);
+              
+              return (
+                <motion.div
+                  key={idx}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.3 + idx * 0.1 }}
+                  className="bg-white rounded-xl p-4"
+                >
+                  <p className="font-bold text-gray-900 text-sm mb-2">{q.question}</p>
+                  <div className="flex gap-2">
+                    {q.options.map((option, optIdx) => {
+                      const percentage = total > 0 ? (counts[optIdx] / total) * 100 : 0;
+                      const isMax = counts[optIdx] === maxCount && maxCount > 0;
+                      return (
+                        <div
+                          key={optIdx}
+                          className={`flex-1 h-2 rounded-full transition-all ${
+                            isMax ? 'bg-gray-900' : 'bg-gray-300'
+                          }`}
+                          style={{
+                            height: `${Math.max(8, percentage / 10)}px`,
+                          }}
+                          title={`${counts[optIdx]} responses`}
+                        />
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-gray-600 mt-2 font-medium">
+                    {total} {total === 1 ? 'response' : 'responses'} aggregated
+                  </p>
+                </motion.div>
+              );
+            })}
           </div>
 
           <Button size="lg" onClick={handleComplete} className="w-full">

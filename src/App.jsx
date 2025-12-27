@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from './components/Button';
 import { Card } from './components/Card';
@@ -8,6 +8,8 @@ import { TeamNaming } from './components/TeamNaming';
 import { GroupPulse } from './components/GroupPulse';
 import { TOPIC_SUGGESTIONS, selectContentPack, CONTENT_PACKS } from './lib/contentPacks';
 import { sounds, toggleSound, isSoundEnabled } from './lib/sounds';
+import { GameService } from './lib/gameService';
+import { useGameRoom } from './hooks/useGameRoom';
 import PopQuizRally from './PopQuizRally';
 import SecretPhrase from './SecretPhrase';
 import Sync from './Sync';
@@ -27,6 +29,78 @@ export default function App() {
   const [teamData, setTeamData] = useState([]);
   const [customTeamNames, setCustomTeamNames] = useState({});
   const [soundOn, setSoundOn] = useState(true);
+  const [userId, setUserId] = useState(null);
+  const [roomId, setRoomId] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  // Use game room hook when we have room code and user info
+  const gameRoom = useGameRoom(roomCode, userId, username, isHost);
+
+  // Sync players from backend
+  useEffect(() => {
+    if (gameRoom.players && gameRoom.players.length > 0) {
+      const playerNames = gameRoom.players
+        .filter(p => !p.is_host)
+        .map(p => p.username);
+      setPlayers(playerNames);
+    }
+  }, [gameRoom.players]);
+
+  // Sync teams from backend
+  useEffect(() => {
+    if (gameRoom.teams && gameRoom.teams.length > 0) {
+      const formattedTeams = gameRoom.teams.map((team) => {
+        const players = team.players || [];
+        const playerNames = players.map(p => p.username || p);
+        return {
+          id: team.id,
+          name: team.custom_name || team.original_name,
+          originalName: team.original_name,
+          players: playerNames,
+          color: team.color,
+        };
+      });
+      setTeamData(formattedTeams);
+      
+      // Update custom team names
+      const names = {};
+      formattedTeams.forEach(team => {
+        if (team.name !== team.originalName) {
+          names[team.originalName] = team.name;
+        }
+      });
+      setCustomTeamNames(names);
+      
+      // Find user's team
+      const userTeam = formattedTeams.find(t => 
+        t.players.includes(username)
+      );
+      if (userTeam) {
+        setAssignedTeam(userTeam.name);
+      }
+    }
+  }, [gameRoom.teams, username]);
+
+  // Sync room status and navigate accordingly
+  useEffect(() => {
+    if (!gameRoom.room) return;
+    
+    const status = gameRoom.room.status;
+    
+    // Auto-navigate based on room status
+    if (status === 'team-assignment' && view === 'lobby') {
+      setView('team-assignment');
+    } else if (status === 'team-naming' && view === 'team-assignment') {
+      setView('team-naming');
+    } else if (status === 'group-pulse' && view === 'team-naming') {
+      setView('group-pulse');
+    } else if (status === 'playing' && view === 'leaderboard') {
+      setView('game');
+    } else if (status === 'ended' && view === 'game') {
+      // Game ended - show winner screen
+      setView('game');
+    }
+  }, [gameRoom.room?.status, view]);
 
   const generateRoomCode = () => {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -43,90 +117,134 @@ export default function App() {
     return Math.max(2, Math.ceil(playerCount / size));
   };
 
-  const handleHostGame = () => {
+  const handleHostGame = async () => {
     sounds.tap();
     setIsHost(true);
-    setRoomCode(generateRoomCode());
     setView('topic-select');
   };
 
-  const handleJoinGame = () => {
-    if (!username.trim()) {
-      alert('Please enter your name');
+  const handleJoinGame = async () => {
+    if (!username.trim() || !roomCode.trim()) {
+      alert('Please enter your name and room code');
       return;
     }
+    
+    setLoading(true);
     sounds.success();
     setIsHost(false);
 
-    const simulatedPlayers = generatePlayerNames(11);
-    const allPlayers = [username, ...simulatedPlayers];
-    setPlayers(allPlayers);
+    try {
+      const result = await GameService.joinRoom({
+        roomCode: roomCode.toUpperCase(),
+        username: username.trim(),
+      });
 
-    const teamNum = Math.floor(Math.random() * 3) + 1;
-    setAssignedTeam(`Team ${teamNum}`);
-
-    setView('lobby');
+      if (result.success) {
+        setUserId(result.player.id);
+        setRoomId(result.room.id);
+        setPlayers([result.player]);
+        setView('lobby');
+      } else {
+        alert(result.error || 'Failed to join room');
+      }
+    } catch (error) {
+      alert('Error joining room: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleGenerateEvent = () => {
+  const handleGenerateEvent = async () => {
     sounds.transition();
     const pack = selectContentPack(topicInput);
     setContentPack(pack);
     setView('generating');
   };
 
-  const handleGeneratingComplete = () => {
-    setView('host-setup');
+  const handleGeneratingComplete = async () => {
+    // Create room after content is generated
+    if (!username.trim()) {
+      setUsername('Host');
+    }
+    
+    setLoading(true);
+    try {
+      const result = await GameService.createRoom({
+        username: username || 'Host',
+        topic: topicInput,
+        gameMode: null, // Will be set when game mode is selected
+        teamSize,
+        targetScore,
+      });
+
+      if (result.success) {
+        setRoomCode(result.room.code);
+        setRoomId(result.room.id);
+        setUserId(result.hostPlayer.id);
+        setPlayers([result.hostPlayer]);
+        setView('host-setup');
+      } else {
+        alert(result.error || 'Failed to create room');
+      }
+    } catch (error) {
+      alert('Error creating room: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleSelectMode = (mode) => {
+  const handleSelectMode = async (mode) => {
     sounds.tap();
     setGameMode(mode);
+    
+    // Update room with game mode
+    if (roomId) {
+      await GameService.updateRoom({ roomId, updates: { game_mode: mode } });
+    }
+    
     setView('host-config');
   };
 
-  const handleHostStartSession = () => {
+  const handleHostStartSession = async () => {
+    if (!roomId || !contentPack) {
+      alert('Missing room or content pack');
+      return;
+    }
+
+    setLoading(true);
     sounds.transition();
-    const simulatedPlayers = generatePlayerNames(12);
-    setPlayers(simulatedPlayers);
 
-    const calculatedNumTeams = calculateNumTeams(simulatedPlayers.length, teamSize);
-    const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
-    const teamNames = Array.from({ length: calculatedNumTeams }, (_, i) => `Team ${i + 1}`);
-    const teams = teamNames.map((team, idx) => ({
-      name: team,
-      players: simulatedPlayers.filter((_, i) => i % calculatedNumTeams === idx),
-      color: TEAM_COLORS[idx % TEAM_COLORS.length],
-    }));
+    try {
+      // Start session and assign teams
+      await GameService.startSession({ roomId, contentPack });
+      const assignResult = await GameService.assignTeams({ roomId, teamSize });
 
-    setTeamData(teams);
-    setView('host-observing');
+      if (assignResult.success) {
+        // Format teams for UI
+        const formattedTeams = assignResult.teams.map((team) => ({
+          id: team.id,
+          name: team.original_name,
+          originalName: team.original_name,
+          players: team.players || [],
+          color: team.color,
+        }));
+        setTeamData(formattedTeams);
+        setView('host-observing');
+      } else {
+        alert(assignResult.error || 'Failed to start session');
+      }
+    } catch (error) {
+      alert('Error starting session: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handlePlayerStartSession = () => {
+    // Players wait for host to start - this is handled by real-time sync
+    // When host starts, players will automatically see team assignment
+    // This function is kept for backward compatibility but shouldn't be called
     sounds.transition();
-
-    // Ensure players have gameMode and contentPack (in real app, these would be synced from host)
-    // For demo, use defaults if not set
-    if (!gameMode) {
-      setGameMode('pop-quiz'); // Default game mode
-    }
-    if (!contentPack) {
-      const pack = selectContentPack('');
-      setContentPack(pack);
-    }
-
-    const calculatedNumTeams = calculateNumTeams(players.length, teamSize);
-    const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
-    const teamNames = Array.from({ length: calculatedNumTeams }, (_, i) => `Team ${i + 1}`);
-    const teams = teamNames.map((team, idx) => ({
-      name: team,
-      players: players.filter((_, i) => i % calculatedNumTeams === idx),
-      color: TEAM_COLORS[idx % TEAM_COLORS.length],
-    }));
-
-    setTeamData(teams);
-    setView('team-assignment');
   };
 
   const handleTeamAssignmentContinue = () => {
@@ -134,14 +252,36 @@ export default function App() {
     setView('team-naming');
   };
 
-  const handleTeamNamingComplete = (finalNames) => {
+  const handleTeamNamingComplete = async (finalNames) => {
     sounds.success();
     setCustomTeamNames(finalNames);
+    
+    // Update team names in backend
+    if (gameRoom && gameRoom.teams) {
+      for (const team of gameRoom.teams) {
+        const customName = finalNames[team.original_name];
+        if (customName) {
+          await gameRoom.updateTeamName(team.id, customName);
+        }
+      }
+    }
+    
+    // Update room status to group-pulse
+    if (roomId) {
+      await GameService.startGroupPulse({ roomId });
+    }
+    
     setView('group-pulse');
   };
 
-  const handleGroupPulseComplete = () => {
+  const handleGroupPulseComplete = async () => {
     sounds.success();
+    
+    // Start the game
+    if (roomId) {
+      await GameService.startGame({ roomId });
+    }
+    
     setView('leaderboard');
   };
 
@@ -159,8 +299,15 @@ export default function App() {
     setView('game');
   };
 
-  const handleEndGame = () => {
+  const handleEndGame = async () => {
     sounds.gameEnd();
+    
+    // End game in backend
+    if (roomId) {
+      await GameService.endGame({ roomId });
+    }
+    
+    // Reset state
     setView('landing');
     setGameMode(null);
     setIsHost(false);
@@ -172,6 +319,8 @@ export default function App() {
     setContentPack(null);
     setTeamData([]);
     setCustomTeamNames({});
+    setUserId(null);
+    setRoomId(null);
   };
 
   const handleSoundToggle = () => {
@@ -197,6 +346,11 @@ export default function App() {
       topicName: contentPack.name,
       onEnd: handleEndGame,
       customTeamNames,
+      gameSync: gameRoom.getGameSync(),
+      userId,
+      roomId,
+      teams: teamData,
+      scores: gameRoom.scores || scores,
     };
 
     switch (gameMode) {
@@ -323,20 +477,23 @@ export default function App() {
               </div>
 
               <div className="mb-6">
-                <h3 className="font-bold mb-3 text-gray-900 text-sm uppercase tracking-wide">Players in Room ({players.length})</h3>
+                <h3 className="font-bold mb-3 text-gray-900 text-sm uppercase tracking-wide">Players in Room ({gameRoom.players?.filter(p => !p.is_host).length || players.length})</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto">
-                  {players.map((player, idx) => (
-                    <div
-                      key={idx}
-                      className={`p-3 rounded-xl text-sm font-medium ${
-                        player === username
-                          ? 'bg-gray-900 text-white'
-                          : 'bg-white text-gray-700'
-                      }`}
-                    >
-                      {player}
-                    </div>
-                  ))}
+                  {(gameRoom.players?.filter(p => !p.is_host) || players).map((player, idx) => {
+                    const playerName = typeof player === 'string' ? player : player.username;
+                    return (
+                      <div
+                        key={idx}
+                        className={`p-3 rounded-xl text-sm font-medium ${
+                          playerName === username
+                            ? 'bg-gray-900 text-white'
+                            : 'bg-white text-gray-700'
+                        }`}
+                      >
+                        {playerName}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -348,13 +505,6 @@ export default function App() {
                   <div className="w-2 h-2 bg-gray-900 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
                 </div>
               </div>
-
-              <div className="text-center text-sm text-gray-600 mb-4 font-medium">
-                <p>Demo: Preview what happens when host starts</p>
-              </div>
-              <Button size="lg" onClick={handlePlayerStartSession} className="w-full">
-                Simulate Start
-              </Button>
             </Card>
           </motion.div>
         )}
@@ -516,19 +666,21 @@ export default function App() {
                     </div>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto mb-3">
-                    {generatePlayerNames(12).map((player, idx) => (
+                    {(gameRoom.players?.filter(p => !p.is_host) || []).map((player, idx) => (
                       <motion.div
-                        key={idx}
+                        key={player.id || idx}
                         initial={{ opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: idx * 0.1 }}
                         className="p-2 bg-white rounded-xl text-sm text-gray-700 font-medium"
                       >
-                        {player}
+                        {player.username}
                       </motion.div>
                     ))}
                   </div>
-                  <p className="text-sm text-gray-800 text-center font-bold">12 players connected</p>
+                  <p className="text-sm text-gray-800 text-center font-bold">
+                    {gameRoom.players?.filter(p => !p.is_host).length || 0} players connected
+                  </p>
                 </Card>
 
                 <div>
@@ -700,7 +852,11 @@ export default function App() {
         )}
 
         {view === 'group-pulse' && (
-          <GroupPulse onComplete={handleGroupPulseComplete} />
+          <GroupPulse 
+            onComplete={handleGroupPulseComplete}
+            gameSync={gameRoom.getGameSync()}
+            userId={userId}
+          />
         )}
 
         {view === 'leaderboard' && (
