@@ -343,7 +343,7 @@ export default function App() {
       username,
       roomCode,
       contentPack,
-      topicName: contentPack.name,
+      topicName: contentPack?.name || 'Game',
       onEnd: handleEndGame,
       customTeamNames,
       gameSync: gameRoom.getGameSync(),
