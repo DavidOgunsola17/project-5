@@ -17,7 +17,9 @@ serve(async (req) => {
     const { roomId, teamSize } = await req.json();
 
     const supabaseClient = createClient(
+      // @ts-ignore Deno is available in Supabase Edge Functions runtime
       Deno.env.get('SUPABASE_URL') ?? '',
+      // @ts-ignore Deno is available in Supabase Edge Functions runtime
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
