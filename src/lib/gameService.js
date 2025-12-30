@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, isSupabaseConfigured } from './supabase';
 
 /**
  * Game Service
@@ -10,6 +10,18 @@ export class GameService {
    */
   static async createRoom({ username, topic, gameMode, teamSize, targetScore }) {
     try {
+      // Check if Supabase is properly configured
+      if (!isSupabaseConfigured) {
+        const errorMsg = 'Supabase credentials not configured. ' +
+          'In StackBlitz: Go to Settings → Environment Variables and add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY. ' +
+          'For local dev: Create a .env file with these variables.';
+        console.error(errorMsg);
+        return { 
+          success: false, 
+          error: errorMsg
+        };
+      }
+
       // Generate room code
       const code = Math.random().toString(36).substring(2, 8).toUpperCase();
 
@@ -28,7 +40,15 @@ export class GameService {
         .select()
         .single();
 
-      if (roomError) throw roomError;
+      if (roomError) {
+        console.error('Room creation error details:', {
+          message: roomError.message,
+          code: roomError.code,
+          details: roomError.details,
+          hint: roomError.hint,
+        });
+        throw roomError;
+      }
 
       // Create host player record (host is not a player, but we track them)
       const { data: hostPlayer, error: hostError } = await supabase
@@ -41,7 +61,15 @@ export class GameService {
         .select()
         .single();
 
-      if (hostError) throw hostError;
+      if (hostError) {
+        console.error('Host player creation error details:', {
+          message: hostError.message,
+          code: hostError.code,
+          details: hostError.details,
+          hint: hostError.hint,
+        });
+        throw hostError;
+      }
 
       return { success: true, room, hostPlayer };
     } catch (error) {

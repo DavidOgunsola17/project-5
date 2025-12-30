@@ -66,6 +66,101 @@ export default function Sync({ isHost, numPlayers, numTeams, targetScore, userna
     setTimeLeft(15);
   };
 
+  // Subscribe to realtime updates
+  useEffect(() => {
+    if (!gameSync || !roomId) return;
+
+    // Subscribe to game state changes
+    const unsubscribeGameState = gameSync.onTableChange('game_state', async () => {
+      const { data: state } = await gameSync.getGameState();
+      if (state) {
+        // Sync game state from backend
+        if (state.current_round !== undefined && state.current_round !== currentRound) {
+          setCurrentRound(state.current_round);
+        }
+        if (state.current_question && state.current_question !== currentQuestion) {
+          setCurrentQuestion(state.current_question);
+        }
+        if (state.time_left !== undefined && state.time_left !== timeLeft) {
+          setTimeLeft(state.time_left);
+        }
+        if (state.status && state.status !== gameState) {
+          setGameState(state.status);
+        }
+        // If host started a new round, sync it
+        if (state.status === 'playing' && state.current_round !== currentRound && !isHost) {
+          const questions = contentPack?.syncQuestions || [];
+          const question = questions[state.current_round % questions.length];
+          setCurrentQuestion(question);
+          setSelectedAnswer(null);
+          setHasLocked(false);
+          setShowResults(false);
+        }
+      }
+    });
+
+    // Subscribe to answer changes
+    const unsubscribeAnswers = gameSync.onTableChange('sync_answers', async () => {
+      if (showResults || gameState !== 'playing') {
+        // Refresh answers display when in results view
+        const { data: allAnswers } = await gameSync.getSyncAnswers(currentRound);
+        if (allAnswers && allAnswers.length > 0) {
+          // Group by team
+          const teamAnswers = {};
+          allAnswers.forEach(a => {
+            const teamName = a.teams?.custom_name || a.teams?.original_name || 'Unknown';
+            if (!teamAnswers[teamName]) {
+              teamAnswers[teamName] = [];
+            }
+            teamAnswers[teamName].push(a.selected_answer);
+          });
+
+          // Calculate alignment for each team
+          const teamResults = Object.entries(teamAnswers).map(([teamName, answers]) => {
+            const answerCounts = [0, 0, 0, 0];
+            answers.forEach(ans => {
+              if (ans >= 0 && ans < 4) answerCounts[ans]++;
+            });
+            const majorityAnswer = answerCounts.indexOf(Math.max(...answerCounts));
+            const majorityCount = Math.max(...answerCounts);
+            const alignmentScore = Math.floor((majorityCount / answers.length) * 100);
+            const pointsEarned = alignmentScore >= 50 ? 1 : 0;
+
+            return {
+              team: teamName,
+              answers: answerCounts,
+              majorityAnswer,
+              majorityCount,
+              totalPlayers: answers.length,
+              alignmentScore,
+              pointsEarned,
+            };
+          });
+          setRoundResults(teamResults);
+        }
+      }
+    });
+
+    // Subscribe to team score changes
+    const unsubscribeTeams = gameSync.onTableChange('teams', async () => {
+      const { data: teamsData } = await gameSync.getTeams();
+      if (teamsData) {
+        const scoreMap = {};
+        teamsData.forEach((team) => {
+          const teamName = team.custom_name || team.original_name;
+          scoreMap[teamName] = team.score || 0;
+        });
+        setScores(scoreMap);
+      }
+    });
+
+    return () => {
+      unsubscribeGameState();
+      unsubscribeAnswers();
+      unsubscribeTeams();
+    };
+  }, [gameSync, roomId, currentRound, currentQuestion, timeLeft, gameState, showResults, isHost, contentPack]);
+
   useEffect(() => {
     if (gameState === 'playing' && !showResults && timeLeft > 0) {
       const timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);

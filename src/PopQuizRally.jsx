@@ -111,6 +111,76 @@ export default function PopQuizRally({ isHost, numPlayers, numTeams, targetScore
     }
   };
 
+  // Subscribe to realtime updates
+  useEffect(() => {
+    if (!gameSync || !roomId) return;
+
+    // Subscribe to game state changes
+    const unsubscribeGameState = gameSync.onTableChange('game_state', async () => {
+      const { data: state } = await gameSync.getGameState();
+      if (state) {
+        // Sync game state from backend
+        if (state.current_round !== undefined && state.current_round !== currentRound) {
+          setCurrentRound(state.current_round);
+        }
+        if (state.current_question && state.current_question !== currentQuestion) {
+          setCurrentQuestion(state.current_question);
+        }
+        if (state.time_left !== undefined && state.time_left !== timeLeft) {
+          setTimeLeft(state.time_left);
+        }
+        if (state.status && state.status !== gameState) {
+          setGameState(state.status);
+        }
+        // If host started a new round, sync it
+        if (state.status === 'playing' && state.current_round !== currentRound && !isHost) {
+          const questions = contentPack?.popQuizQuestions || [];
+          const question = questions[state.current_round % questions.length];
+          setCurrentQuestion(question);
+          setSelectedAnswer(null);
+          setAnsweredCorrectly(null);
+          setShowResults(false);
+          setRoundAnswers([]);
+        }
+      }
+    });
+
+    // Subscribe to answer changes
+    const unsubscribeAnswers = gameSync.onTableChange('pop_quiz_answers', async () => {
+      if (showResults || gameState !== 'playing') {
+        // Refresh answers display when in results view
+        const { data: allAnswers } = await gameSync.getPopQuizAnswers(currentRound);
+        if (allAnswers) {
+          const formattedAnswers = allAnswers.map(a => ({
+            player: a.players?.username || 'Unknown',
+            team: a.teams?.custom_name || a.teams?.original_name || 'Unknown',
+            correct: a.is_correct,
+          }));
+          setRoundAnswers(formattedAnswers);
+        }
+      }
+    });
+
+    // Subscribe to team score changes
+    const unsubscribeTeams = gameSync.onTableChange('teams', async () => {
+      const { data: teamsData } = await gameSync.getTeams();
+      if (teamsData) {
+        const scoreMap = {};
+        teamsData.forEach((team) => {
+          const teamName = team.custom_name || team.original_name;
+          scoreMap[teamName] = team.score || 0;
+        });
+        setScores(scoreMap);
+      }
+    });
+
+    return () => {
+      unsubscribeGameState();
+      unsubscribeAnswers();
+      unsubscribeTeams();
+    };
+  }, [gameSync, roomId, currentRound, currentQuestion, timeLeft, gameState, showResults, isHost, contentPack]);
+
   useEffect(() => {
     if (gameState === 'playing' && !showResults && timeLeft > 0) {
       const timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);

@@ -82,25 +82,45 @@ export default function App() {
   }, [gameRoom.teams, username]);
 
   // Sync room status and navigate accordingly
+  // Navigation is based solely on room.status, not current view
   useEffect(() => {
     if (!gameRoom.room) return;
     
     const status = gameRoom.room.status;
     
-    // Auto-navigate based on room status
-    if (status === 'team-assignment' && view === 'lobby') {
-      setView('team-assignment');
-    } else if (status === 'team-naming' && view === 'team-assignment') {
-      setView('team-naming');
-    } else if (status === 'group-pulse' && view === 'team-naming') {
-      setView('group-pulse');
-    } else if (status === 'playing' && view === 'leaderboard') {
-      setView('game');
-    } else if (status === 'ended' && view === 'game') {
-      // Game ended - show winner screen
-      setView('game');
+    // Map room status to view - handle all transitions
+    if (status === 'waiting') {
+      // Don't auto-navigate from host-setup or lobby if already there
+      if (view !== 'host-setup' && view !== 'lobby' && view !== 'host-config' && view !== 'host-observing') {
+        if (isHost) {
+          setView('host-setup');
+        } else {
+          setView('lobby');
+        }
+      }
+    } else if (status === 'team-assignment') {
+      if (view !== 'team-assignment') {
+        setView('team-assignment');
+      }
+    } else if (status === 'team-naming') {
+      if (view !== 'team-naming') {
+        setView('team-naming');
+      }
+    } else if (status === 'group-pulse') {
+      if (view !== 'group-pulse') {
+        setView('group-pulse');
+      }
+    } else if (status === 'playing') {
+      if (view !== 'game') {
+        setView('game');
+      }
+    } else if (status === 'ended') {
+      // Game ended - stay on game view to show winner screen
+      if (view !== 'game') {
+        setView('game');
+      }
     }
-  }, [gameRoom.room?.status, view]);
+  }, [gameRoom.room?.status, isHost]);
 
   const generateRoomCode = () => {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -184,7 +204,8 @@ export default function App() {
         setPlayers([result.hostPlayer]);
         setView('host-setup');
       } else {
-        alert(result.error || 'Failed to create room');
+        console.error('Room creation failed:', result.error);
+        alert(result.error || 'Failed to create room. Check console for details.');
       }
     } catch (error) {
       alert('Error creating room: ' + error.message);

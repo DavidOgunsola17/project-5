@@ -79,6 +79,74 @@ export default function SecretPhrase({ isHost, numPlayers, numTeams, targetScore
     setTimeLeft(8);
   };
 
+  // Subscribe to realtime updates
+  useEffect(() => {
+    if (!gameSync || !roomId) return;
+
+    // Subscribe to game state changes
+    const unsubscribeGameState = gameSync.onTableChange('game_state', async () => {
+      const { data: state } = await gameSync.getGameState();
+      if (state) {
+        if (state.status && state.status !== gameState) {
+          setGameState(state.status);
+        }
+        if (state.current_round !== undefined && state.current_round !== roundNumber) {
+          setRoundNumber(state.current_round);
+        }
+      }
+    });
+
+    // Subscribe to clue changes
+    const unsubscribeClues = gameSync.onTableChange('secret_phrase_clues', async () => {
+      if (gameState === 'playing' && currentPhrase) {
+        const { data: clue } = await gameSync.getCurrentClue(roundNumber);
+        if (clue) {
+          setCurrentClueIndex(clue.clue_index);
+          // Update clue recipient if needed
+          const allPlayers = teams.flatMap(t => t.players);
+          if (allPlayers.length > 0) {
+            const recipient = allPlayers[clue.clue_index % allPlayers.length];
+            setClueRecipient(recipient);
+          }
+        }
+      }
+    });
+
+    // Subscribe to guess changes
+    const unsubscribeGuesses = gameSync.onTableChange('secret_phrase_guesses', async () => {
+      if (gameState === 'playing') {
+        const { data: guesses } = await gameSync.getSecretPhraseGuesses(roundNumber);
+        if (guesses) {
+          const formatted = guesses.map(g => ({
+            player: g.players?.username || 'Unknown',
+            guess: g.guess,
+          }));
+          setRecentGuesses(formatted.slice(-5).reverse());
+        }
+      }
+    });
+
+    // Subscribe to team score changes
+    const unsubscribeTeams = gameSync.onTableChange('teams', async () => {
+      const { data: teamsData } = await gameSync.getTeams();
+      if (teamsData) {
+        const scoreMap = {};
+        teamsData.forEach((team) => {
+          const teamName = team.custom_name || team.original_name;
+          scoreMap[teamName] = team.score || 0;
+        });
+        setScores(scoreMap);
+      }
+    });
+
+    return () => {
+      unsubscribeGameState();
+      unsubscribeClues();
+      unsubscribeGuesses();
+      unsubscribeTeams();
+    };
+  }, [gameSync, roomId, gameState, roundNumber, currentPhrase, teams]);
+
   useEffect(() => {
     if (gameState === 'playing' && timeLeft > 0 && currentPhrase) {
       const timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);

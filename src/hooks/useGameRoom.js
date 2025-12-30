@@ -101,10 +101,23 @@ export function useGameRoom(roomCode, userId, username, isHost) {
     };
   }, [roomCode, userId, username, loadInitialData]);
 
-  // Subscribe to real-time updates
+  // Track when sync is ready (has roomId)
+  const [syncReady, setSyncReady] = useState(false);
+
+  // Mark sync as ready after initialization
   useEffect(() => {
     const sync = gameSyncRef.current;
-    if (!sync) return;
+    if (sync && sync.roomId) {
+      setSyncReady(true);
+    } else {
+      setSyncReady(false);
+    }
+  }, [gameSyncRef.current?.roomId]);
+
+  // Subscribe to real-time updates - only after sync is initialized
+  useEffect(() => {
+    const sync = gameSyncRef.current;
+    if (!sync || !sync.roomId || !syncReady) return;
 
     // Subscribe to players changes
     const unsubscribePlayers = sync.onTableChange('players', async () => {
@@ -137,6 +150,35 @@ export function useGameRoom(roomCode, userId, username, isHost) {
       setRoom(data);
     });
 
+    // Subscribe to gameplay table changes
+    const unsubscribePopQuizAnswers = sync.onTableChange('pop_quiz_answers', async () => {
+      // Trigger score recalculation if needed
+      const { data: teamsData } = await sync.getTeams();
+      if (teamsData) {
+        const scoreMap = {};
+        teamsData.forEach((team) => {
+          scoreMap[team.custom_name || team.original_name] = team.score || 0;
+        });
+        setScores(scoreMap);
+      }
+    });
+
+    const unsubscribeSecretPhraseGuesses = sync.onTableChange('secret_phrase_guesses', async () => {
+      // Updates will be handled by game components
+    });
+
+    const unsubscribeSecretPhraseClues = sync.onTableChange('secret_phrase_clues', async () => {
+      // Updates will be handled by game components
+    });
+
+    const unsubscribeSyncAnswers = sync.onTableChange('sync_answers', async () => {
+      // Updates will be handled by game components
+    });
+
+    const unsubscribeGroupPulseResponses = sync.onTableChange('group_pulse_responses', async () => {
+      // Updates will be handled by game components
+    });
+
     // Update presence periodically
     const presenceInterval = setInterval(() => {
       sync.updatePresence();
@@ -147,9 +189,14 @@ export function useGameRoom(roomCode, userId, username, isHost) {
       unsubscribeTeams();
       unsubscribeGameState();
       unsubscribeRoom();
+      unsubscribePopQuizAnswers();
+      unsubscribeSecretPhraseGuesses();
+      unsubscribeSecretPhraseClues();
+      unsubscribeSyncAnswers();
+      unsubscribeGroupPulseResponses();
       clearInterval(presenceInterval);
     };
-  }, []);
+  }, [syncReady]);
 
   // Helper functions
   const updateRoomStatus = useCallback(async (status, updates = {}) => {
