@@ -81,6 +81,21 @@ export default function App() {
     }
   }, [gameRoom.teams, username]);
 
+  // Sync gameMode and contentPack from room data (Priority 1)
+  useEffect(() => {
+    if (!gameRoom.room) return;
+    
+    // Sync gameMode from room
+    if (gameRoom.room.game_mode && gameRoom.room.game_mode !== gameMode) {
+      setGameMode(gameRoom.room.game_mode);
+    }
+    
+    // Sync contentPack from room
+    if (gameRoom.room.content_pack && gameRoom.room.content_pack !== contentPack) {
+      setContentPack(gameRoom.room.content_pack);
+    }
+  }, [gameRoom.room?.game_mode, gameRoom.room?.content_pack]);
+
   // Sync room status and navigate accordingly
   // Navigation is based solely on room.status, not current view
   useEffect(() => {
@@ -107,20 +122,33 @@ export default function App() {
         setView('team-naming');
       }
     } else if (status === 'group-pulse') {
-      if (view !== 'group-pulse') {
-        setView('group-pulse');
+      // Priority 4: Role-based navigation for Group Pulse
+      if (isHost) {
+        // Host should stay in host-observing or go to group-pulse host view
+        if (view !== 'group-pulse' && view !== 'host-observing') {
+          setView('group-pulse');
+        }
+      } else {
+        // Players go to group-pulse question UI
+        if (view !== 'group-pulse') {
+          setView('group-pulse');
+        }
       }
     } else if (status === 'playing') {
-      if (view !== 'game') {
-        setView('game');
+      // Priority 2: Navigation readiness guard - only navigate when gameMode and contentPack are ready
+      if (gameMode && contentPack) {
+        if (view !== 'game') {
+          setView('game');
+        }
       }
+      // If not ready, stay on current view (will show loading if needed)
     } else if (status === 'ended') {
       // Game ended - stay on game view to show winner screen
       if (view !== 'game') {
         setView('game');
       }
     }
-  }, [gameRoom.room?.status, isHost]);
+  }, [gameRoom.room?.status, isHost, gameMode, contentPack, view]);
 
   const generateRoomCode = () => {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -351,7 +379,17 @@ export default function App() {
   };
 
   const renderGame = () => {
-    if (!gameMode || !contentPack) return null;
+    // Priority 5: Prevent blank white screens - show loading instead of null
+    if (!gameMode || !contentPack) {
+      return (
+        <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto mb-4"></div>
+            <p className="text-gray-600 font-medium">Loading game...</p>
+          </div>
+        </div>
+      );
+    }
 
     // Calculate numTeams based on team size and current player count
     const calculatedNumTeams = calculateNumTeams(players.length, teamSize);
@@ -877,6 +915,7 @@ export default function App() {
             onComplete={handleGroupPulseComplete}
             gameSync={gameRoom.getGameSync()}
             userId={userId}
+            isHost={isHost}
           />
         )}
 

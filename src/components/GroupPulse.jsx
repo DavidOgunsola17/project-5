@@ -19,12 +19,48 @@ const PULSE_QUESTIONS = [
   },
 ];
 
-export function GroupPulse({ onComplete, gameSync, userId }) {
+export function GroupPulse({ onComplete, gameSync, userId, isHost = false }) {
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [answers, setAnswers] = useState([]);
   const [selectedOption, setSelectedOption] = useState(null);
   const [showResults, setShowResults] = useState(false);
   const [aggregateResults, setAggregateResults] = useState(null);
+
+  // Host: Sync progress and results from backend
+  useEffect(() => {
+    if (!isHost || !gameSync) return;
+
+    const loadHostData = async () => {
+      const { data } = await gameSync.getGroupPulseResults();
+      if (data && data.length > 0) {
+        // Determine current question based on responses
+        const maxQuestionIndex = Math.max(...data.map(a => a.question_index || 0));
+        if (maxQuestionIndex >= currentQuestion) {
+          setCurrentQuestion(maxQuestionIndex);
+        }
+
+        // Load aggregate results if all questions are answered
+        if (maxQuestionIndex >= PULSE_QUESTIONS.length - 1) {
+          const results = PULSE_QUESTIONS.map((q, qIdx) => {
+            const questionAnswers = data.filter(a => a.question_index === qIdx);
+            const counts = [0, 0, 0, 0];
+            questionAnswers.forEach(a => {
+              if (a.answer_index >= 0 && a.answer_index < 4) {
+                counts[a.answer_index]++;
+              }
+            });
+            return counts;
+          });
+          setAggregateResults(results);
+          setShowResults(true);
+        }
+      }
+    };
+
+    loadHostData();
+    const interval = setInterval(loadHostData, 2000); // Poll every 2 seconds
+    return () => clearInterval(interval);
+  }, [isHost, gameSync, currentQuestion]);
 
   const handleAnswer = (optionIndex) => {
     sounds.tap();
@@ -145,6 +181,101 @@ export function GroupPulse({ onComplete, gameSync, userId }) {
           <Button size="lg" onClick={handleComplete} className="w-full">
             Start Playing
           </Button>
+        </Card>
+      </motion.div>
+    );
+  }
+
+  // Priority 3: Host UI - show observer/control view instead of question UI
+  if (isHost) {
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="min-h-screen flex items-center justify-center p-6 bg-slate-50"
+      >
+        <Card className="max-w-2xl w-full text-center" variant="purple">
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ type: 'spring', delay: 0.2 }}
+            className="text-6xl mb-6"
+          >
+            👀
+          </motion.div>
+          <h2 className="text-4xl font-black mb-4 tracking-tight">Group Pulse in Progress</h2>
+          <p className="text-gray-700 text-lg font-medium mb-8">
+            Players are answering questions. You'll see the results when everyone is done.
+          </p>
+          
+          <div className="mb-8">
+            <div className="flex gap-2 mb-4">
+              {PULSE_QUESTIONS.map((_, idx) => (
+                <div
+                  key={idx}
+                  className={`flex-1 h-2 rounded-full transition-colors ${
+                    idx < currentQuestion
+                      ? 'bg-gray-900'
+                      : idx === currentQuestion
+                      ? 'bg-gray-600'
+                      : 'bg-gray-200'
+                  }`}
+                />
+              ))}
+            </div>
+            <p className="text-sm text-gray-600 font-medium">
+              Question {currentQuestion + 1} of {PULSE_QUESTIONS.length}
+            </p>
+          </div>
+
+          {showResults && aggregateResults && (
+            <div className="space-y-4 mb-8">
+              {PULSE_QUESTIONS.map((q, idx) => {
+                const counts = aggregateResults?.[idx] || [0, 0, 0, 0];
+                const total = counts.reduce((a, b) => a + b, 0);
+                const maxCount = Math.max(...counts);
+                
+                return (
+                  <motion.div
+                    key={idx}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.3 + idx * 0.1 }}
+                    className="bg-white rounded-xl p-4"
+                  >
+                    <p className="font-bold text-gray-900 text-sm mb-2">{q.question}</p>
+                    <div className="flex gap-2">
+                      {q.options.map((option, optIdx) => {
+                        const percentage = total > 0 ? (counts[optIdx] / total) * 100 : 0;
+                        const isMax = counts[optIdx] === maxCount && maxCount > 0;
+                        return (
+                          <div
+                            key={optIdx}
+                            className={`flex-1 h-2 rounded-full transition-all ${
+                              isMax ? 'bg-gray-900' : 'bg-gray-300'
+                            }`}
+                            style={{
+                              height: `${Math.max(8, percentage / 10)}px`,
+                            }}
+                            title={`${counts[optIdx]} responses`}
+                          />
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-gray-600 mt-2 font-medium">
+                      {total} {total === 1 ? 'response' : 'responses'} aggregated
+                    </p>
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
+
+          {showResults && (
+            <Button size="lg" onClick={handleComplete} className="w-full">
+              Start Playing
+            </Button>
+          )}
         </Card>
       </motion.div>
     );
