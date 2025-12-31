@@ -2,10 +2,17 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from './components/Button';
 import { Card } from './components/Card';
+import { useRoom } from './contexts/RoomContext';
+import { usePlayer } from './contexts/PlayerContext';
+import * as gameAnswersAPI from './api/gameAnswers';
+import * as teamsAPI from './api/teams';
 
 const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
 
 export default function Sync({ isHost, numPlayers, numTeams, targetScore, username, roomCode, contentPack, topicName, onEnd, customTeamNames = {} }) {
+  const { roomId, updateGameState } = useRoom();
+  const { playerId, teamId } = usePlayer();
+  
   const [gameState, setGameState] = useState('starting');
   const [currentRound, setCurrentRound] = useState(0);
   const [teams, setTeams] = useState([]);
@@ -65,14 +72,28 @@ export default function Sync({ isHost, numPlayers, numTeams, targetScore, userna
     }
   }, [timeLeft, gameState, showResults]);
 
-  const lockAnswer = () => {
+  const lockAnswer = async () => {
     if (hasLocked) return;
     setHasLocked(true);
+
+    const answerToSave = selectedAnswer !== null ? selectedAnswer : Math.floor(Math.random() * 4);
+    
+    // Save answer to database
+    if (roomId && playerId && teamId && currentQuestion) {
+      await gameAnswersAPI.saveSyncAnswer(
+        roomId,
+        playerId,
+        teamId,
+        currentRound,
+        currentRound % (contentPack?.syncQuestions?.length || 1),
+        answerToSave
+      );
+    }
 
     const simulatedAnswers = teams.flatMap(team =>
       team.players.map(player => {
         if (player === username) {
-          return { player, team: team.name, answer: selectedAnswer !== null ? selectedAnswer : Math.floor(Math.random() * 4) };
+          return { player, team: team.name, answer: answerToSave };
         }
         const teamBias = Math.floor(Math.random() * 4);
         const answer = Math.random() > 0.3 ? teamBias : Math.floor(Math.random() * 4);
@@ -107,6 +128,16 @@ export default function Sync({ isHost, numPlayers, numTeams, targetScore, userna
       newScores[result.team] += result.pointsEarned;
     });
     setScores(newScores);
+
+    // Update team scores in database
+    if (roomId) {
+      for (const [teamName, score] of Object.entries(newScores)) {
+        const team = teams.find(t => t.name === teamName || t.originalName === teamName);
+        if (team?.id) {
+          await teamsAPI.updateTeamScore(team.id, score);
+        }
+      }
+    }
 
     setShowResults(true);
 

@@ -2,10 +2,17 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from './components/Button';
 import { Card } from './components/Card';
+import { useRoom } from './contexts/RoomContext';
+import { usePlayer } from './contexts/PlayerContext';
+import * as gameAnswersAPI from './api/gameAnswers';
+import * as teamsAPI from './api/teams';
 
 const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
 
 export default function PopQuizRally({ isHost, numPlayers, numTeams, targetScore, username, roomCode, contentPack, topicName, onEnd, customTeamNames = {} }) {
+  const { roomId, updateGameState, fetchGameState } = useRoom();
+  const { playerId, teamId } = usePlayer();
+  
   const [gameState, setGameState] = useState('starting');
   const [currentRound, setCurrentRound] = useState(0);
   const [teams, setTeams] = useState([]);
@@ -71,11 +78,24 @@ export default function PopQuizRally({ isHost, numPlayers, numTeams, targetScore
     }
   }, [timeLeft, gameState, showResults]);
 
-  const submitAnswer = () => {
+  const submitAnswer = async () => {
     if (!currentQuestion || showResults) return;
 
     const correct = selectedAnswer === currentQuestion.correct;
     setAnsweredCorrectly(correct);
+
+    // Save answer to database
+    if (roomId && playerId && teamId && currentQuestion) {
+      await gameAnswersAPI.savePopQuizAnswer(
+        roomId,
+        playerId,
+        teamId,
+        currentRound,
+        currentRound % (contentPack?.popQuizQuestions?.length || 1),
+        selectedAnswer,
+        correct
+      );
+    }
 
     const simulatedAnswers = teams.flatMap(team =>
       team.players.map(player => ({
@@ -94,6 +114,16 @@ export default function PopQuizRally({ isHost, numPlayers, numTeams, targetScore
       }
     });
     setScores(newScores);
+
+    // Update team scores in database
+    if (roomId) {
+      for (const [teamName, score] of Object.entries(newScores)) {
+        const team = teams.find(t => t.name === teamName || t.originalName === teamName);
+        if (team?.id) {
+          await teamsAPI.updateTeamScore(team.id, score);
+        }
+      }
+    }
 
     setShowResults(true);
 

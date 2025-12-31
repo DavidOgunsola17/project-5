@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from './components/Button';
 import { Card } from './components/Card';
@@ -11,8 +11,15 @@ import { sounds, toggleSound, isSoundEnabled } from './lib/sounds';
 import PopQuizRally from './PopQuizRally';
 import SecretPhrase from './SecretPhrase';
 import Sync from './Sync';
+import { RoomProvider, useRoom } from './contexts/RoomContext';
+import { PlayerProvider, usePlayer } from './contexts/PlayerContext';
+import { generateRoomCode } from './lib/utils';
+import * as teamsAPI from './api/teams';
 
-export default function App() {
+function AppContent() {
+  const { roomId, roomCode: contextRoomCode, roomStatus, roomConfig, createOrJoinRoom, joinRoom, updateRoomStatus, updateRoomConfig, fetchRoom, clearRoom } = useRoom();
+  const { playerId, playerName, isHost: contextIsHost, teamId, players: contextPlayers, createOrJoinPlayer, joinPlayer, fetchPlayers, clearPlayer } = usePlayer();
+
   const [view, setView] = useState('landing');
   const [isHost, setIsHost] = useState(false);
   const [gameMode, setGameMode] = useState(null);
@@ -28,10 +35,39 @@ export default function App() {
   const [customTeamNames, setCustomTeamNames] = useState({});
   const [soundOn, setSoundOn] = useState(true);
 
-  const generateRoomCode = () => {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
-  };
+  // Sync context values to local state for UI compatibility
+  useEffect(() => {
+    if (contextRoomCode) {
+      setRoomCode(contextRoomCode);
+    }
+    if (contextIsHost !== undefined) {
+      setIsHost(contextIsHost);
+    }
+    if (roomConfig.gameMode) {
+      setGameMode(roomConfig.gameMode);
+    }
+    if (roomConfig.contentPack) {
+      setContentPack(roomConfig.contentPack);
+    }
+    if (roomConfig.teamSize) {
+      setTeamSize(roomConfig.teamSize);
+    }
+    if (roomConfig.targetScore) {
+      setTargetScore(roomConfig.targetScore);
+    }
+    if (contextPlayers.length > 0) {
+      setPlayers(contextPlayers.map(p => p.username));
+    }
+  }, [contextRoomCode, contextIsHost, roomConfig, contextPlayers]);
 
+  // Fetch players when roomId changes and we're in lobby/host-config views
+  useEffect(() => {
+    if (roomId && (view === 'lobby' || view === 'host-config')) {
+      fetchPlayers(roomId);
+    }
+  }, [roomId, view]);
+
+  // Keep generatePlayerNames for demo/fallback purposes
   const generatePlayerNames = (count) => {
     const names = ['Alex', 'Jordan', 'Sam', 'Taylor', 'Morgan', 'Casey', 'Riley', 'Avery',
                    'Quinn', 'Jamie', 'Skyler', 'Dakota', 'Charlie', 'Finley', 'Reese'];
@@ -43,35 +79,69 @@ export default function App() {
     return Math.max(2, Math.ceil(playerCount / size));
   };
 
-  const handleHostGame = () => {
+  const handleHostGame = async () => {
     sounds.tap();
     setIsHost(true);
-    setRoomCode(generateRoomCode());
+    const code = generateRoomCode();
+    setRoomCode(code);
+    // Room and host player will be created after topic selection
     setView('topic-select');
   };
 
-  const handleJoinGame = () => {
+  const handleJoinGame = async () => {
     if (!username.trim()) {
       alert('Please enter your name');
       return;
     }
+    if (!roomCode.trim()) {
+      alert('Please enter a room code');
+      return;
+    }
+    
     sounds.success();
     setIsHost(false);
 
-    const simulatedPlayers = generatePlayerNames(11);
-    const allPlayers = [username, ...simulatedPlayers];
-    setPlayers(allPlayers);
+    // Join room by code
+    const room = await joinRoom(roomCode.toUpperCase());
+    if (!room) {
+      alert('Room not found. Please check the room code.');
+      return;
+    }
 
-    const teamNum = Math.floor(Math.random() * 3) + 1;
-    setAssignedTeam(`Team ${teamNum}`);
+    // Create/join player
+    const player = await joinPlayer(room.id, username.trim());
+    if (!player) {
+      alert('Failed to join room. Please try again.');
+      return;
+    }
 
+    // Fetch players list
+    await fetchPlayers(room.id);
     setView('lobby');
   };
 
-  const handleGenerateEvent = () => {
+  const handleGenerateEvent = async () => {
     sounds.transition();
     const pack = selectContentPack(topicInput);
     setContentPack(pack);
+    
+    // Create room and host player after topic is selected
+    if (isHost && roomCode && !roomId) {
+      const code = roomCode.toUpperCase();
+      // Generate a temporary host ID (will be replaced when player is created)
+      const tempHostId = crypto.randomUUID();
+      const room = await createOrJoinRoom(code, tempHostId, null, topicInput || null, pack);
+      if (room) {
+        // Create host player with a default name if username not set
+        const hostName = username || 'Host';
+        const hostPlayer = await createOrJoinPlayer(room.id, hostName, true);
+        if (hostPlayer) {
+          // Update room with actual host_id
+          await updateRoomConfig({ host_id: hostPlayer.id, topic: topicInput || null, content_pack: pack });
+        }
+      }
+    }
+    
     setView('generating');
   };
 
@@ -79,53 +149,109 @@ export default function App() {
     setView('host-setup');
   };
 
-  const handleSelectMode = (mode) => {
+  const handleSelectMode = async (mode) => {
     sounds.tap();
     setGameMode(mode);
+    if (roomId) {
+      await updateRoomConfig({ game_mode: mode });
+    }
     setView('host-config');
   };
 
-  const handleHostStartSession = () => {
+  const handleHostStartSession = async () => {
     sounds.transition();
-    const simulatedPlayers = generatePlayerNames(12);
-    setPlayers(simulatedPlayers);
+    
+    if (!roomId) return;
 
-    const calculatedNumTeams = calculateNumTeams(simulatedPlayers.length, teamSize);
+    // Update room config and status
+    await updateRoomConfig({ team_size: teamSize, target_score: targetScore });
+    await updateRoomStatus('team-assignment');
+
+    // Fetch current players
+    await fetchPlayers(roomId);
+    const currentPlayers = contextPlayers.length > 0 ? contextPlayers : [];
+
+    // Create teams
+    const calculatedNumTeams = calculateNumTeams(currentPlayers.length || 12, teamSize);
+    const createdTeams = await teamsAPI.createTeams(roomId, calculatedNumTeams, teamSize);
+    
+    // Assign players to teams
+    const assignments: Record<string, string | null> = {};
+    currentPlayers.forEach((player, idx) => {
+      if (createdTeams[idx % calculatedTeams.length]) {
+        assignments[player.id] = createdTeams[idx % calculatedTeams.length].id;
+      }
+    });
+    await teamsAPI.assignPlayersToTeams(roomId, assignments);
+
+    // Fetch teams and players again
+    const teams = await teamsAPI.fetchTeams(roomId);
+    await fetchPlayers(roomId);
+
+    // Format team data for UI
     const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
-    const teamNames = Array.from({ length: calculatedNumTeams }, (_, i) => `Team ${i + 1}`);
-    const teams = teamNames.map((team, idx) => ({
-      name: team,
-      players: simulatedPlayers.filter((_, i) => i % calculatedNumTeams === idx),
-      color: TEAM_COLORS[idx % TEAM_COLORS.length],
-    }));
+    const formattedTeams = teams.map((team, idx) => {
+      const teamPlayers = contextPlayers.filter(p => p.team_id === team.id);
+      return {
+        name: team.custom_name || team.original_name,
+        originalName: team.original_name,
+        players: teamPlayers.map(p => p.username),
+        color: TEAM_COLORS[idx % TEAM_COLORS.length],
+        id: team.id,
+      };
+    });
 
-    setTeamData(teams);
+    setTeamData(formattedTeams);
     setView('host-observing');
   };
 
-  const handlePlayerStartSession = () => {
+  const handlePlayerStartSession = async () => {
     sounds.transition();
 
-    // Ensure players have gameMode and contentPack (in real app, these would be synced from host)
-    // For demo, use defaults if not set
+    if (!roomId) return;
+
+    // Fetch room to get gameMode and contentPack
+    await fetchRoom();
+    if (roomConfig.gameMode) {
+      setGameMode(roomConfig.gameMode);
+    }
+    if (roomConfig.contentPack) {
+      setContentPack(roomConfig.contentPack);
+    }
+
+    // Fallback to defaults if not set
     if (!gameMode) {
-      setGameMode('pop-quiz'); // Default game mode
+      setGameMode('pop-quiz');
     }
     if (!contentPack) {
       const pack = selectContentPack('');
       setContentPack(pack);
     }
 
-    const calculatedNumTeams = calculateNumTeams(players.length, teamSize);
-    const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
-    const teamNames = Array.from({ length: calculatedNumTeams }, (_, i) => `Team ${i + 1}`);
-    const teams = teamNames.map((team, idx) => ({
-      name: team,
-      players: players.filter((_, i) => i % calculatedNumTeams === idx),
-      color: TEAM_COLORS[idx % TEAM_COLORS.length],
-    }));
+    // Fetch players and teams
+    await fetchPlayers(roomId);
+    const teams = await teamsAPI.fetchTeams(roomId);
 
-    setTeamData(teams);
+    // Format team data for UI
+    const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
+    const formattedTeams = teams.map((team, idx) => {
+      const teamPlayers = contextPlayers.filter(p => p.team_id === team.id);
+      return {
+        name: team.custom_name || team.original_name,
+        originalName: team.original_name,
+        players: teamPlayers.map(p => p.username),
+        color: TEAM_COLORS[idx % TEAM_COLORS.length],
+        id: team.id,
+      };
+    });
+
+    // Find player's team
+    const playerTeam = teams.find(t => t.id === teamId);
+    if (playerTeam) {
+      setAssignedTeam(playerTeam.custom_name || playerTeam.original_name);
+    }
+
+    setTeamData(formattedTeams);
     setView('team-assignment');
   };
 
@@ -161,6 +287,11 @@ export default function App() {
 
   const handleEndGame = () => {
     sounds.gameEnd();
+    if (roomId) {
+      updateRoomStatus('ended');
+    }
+    clearRoom();
+    clearPlayer();
     setView('landing');
     setGameMode(null);
     setIsHost(false);
@@ -325,7 +456,7 @@ export default function App() {
               <div className="mb-6">
                 <h3 className="font-bold mb-3 text-gray-900 text-sm uppercase tracking-wide">Players in Room ({players.length})</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto">
-                  {players.map((player, idx) => (
+                  {players.length > 0 ? players.map((player, idx) => (
                     <div
                       key={idx}
                       className={`p-3 rounded-xl text-sm font-medium ${
@@ -336,7 +467,11 @@ export default function App() {
                     >
                       {player}
                     </div>
-                  ))}
+                  )) : (
+                    <div className="p-3 rounded-xl text-sm font-medium bg-white text-gray-700">
+                      Loading players...
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -516,7 +651,17 @@ export default function App() {
                     </div>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-40 overflow-y-auto mb-3">
-                    {generatePlayerNames(12).map((player, idx) => (
+                    {players.length > 0 ? players.map((player, idx) => (
+                      <motion.div
+                        key={idx}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: idx * 0.1 }}
+                        className="p-2 bg-white rounded-xl text-sm text-gray-700 font-medium"
+                      >
+                        {player}
+                      </motion.div>
+                    )) : generatePlayerNames(12).map((player, idx) => (
                       <motion.div
                         key={idx}
                         initial={{ opacity: 0, x: -20 }}
@@ -528,7 +673,7 @@ export default function App() {
                       </motion.div>
                     ))}
                   </div>
-                  <p className="text-sm text-gray-800 text-center font-bold">12 players connected</p>
+                  <p className="text-sm text-gray-800 text-center font-bold">{players.length || 12} players connected</p>
                 </Card>
 
                 <div>
@@ -759,5 +904,15 @@ export default function App() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <RoomProvider>
+      <PlayerProvider>
+        <AppContent />
+      </PlayerProvider>
+    </RoomProvider>
   );
 }

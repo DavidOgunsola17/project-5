@@ -2,10 +2,17 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from './components/Button';
 import { Card } from './components/Card';
+import { useRoom } from './contexts/RoomContext';
+import { usePlayer } from './contexts/PlayerContext';
+import * as gameAnswersAPI from './api/gameAnswers';
+import * as teamsAPI from './api/teams';
 
 const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
 
 export default function SecretPhrase({ isHost, numPlayers, numTeams, targetScore, username, roomCode, contentPack, topicName, onEnd, customTeamNames = {} }) {
+  const { roomId, updateGameState } = useRoom();
+  const { playerId, teamId } = usePlayer();
+  
   const [gameState, setGameState] = useState('starting');
   const [teams, setTeams] = useState([]);
   const [scores, setScores] = useState({});
@@ -83,16 +90,35 @@ export default function SecretPhrase({ isHost, numPlayers, numTeams, targetScore
     }
   }, [timeLeft, gameState, currentClueIndex, currentPhrase]);
 
-  const handleGuess = () => {
+  const handleGuess = async () => {
     if (!guessInput.trim()) return;
 
     const guess = guessInput.trim().toUpperCase();
     const correct = guess === currentPhrase.phrase.toUpperCase();
 
+    // Save guess to database
+    if (roomId && playerId && teamId && currentPhrase) {
+      await gameAnswersAPI.saveSecretPhraseGuess(
+        roomId,
+        playerId,
+        teamId,
+        roundNumber,
+        currentPhrase.id || currentPhrase.phrase,
+        guess,
+        correct
+      );
+    }
+
     if (correct) {
       const newScores = { ...scores };
       newScores[myTeam.name]++;
       setScores(newScores);
+      
+      // Update team score in database
+      if (roomId && myTeam?.id) {
+        await teamsAPI.updateTeamScore(myTeam.id, newScores[myTeam.name]);
+      }
+      
       endRound(true);
     } else {
       setRecentGuesses([...recentGuesses, { player: username, guess }]);
