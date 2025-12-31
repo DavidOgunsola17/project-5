@@ -183,7 +183,7 @@ function AppContent() {
     const createdTeams = await teamsAPI.createTeams(roomId, calculatedNumTeams, teamSize);
     
     // Assign players to teams
-    const assignments: Record<string, string | null> = {};
+    const assignments = {};
     currentPlayers.forEach((player, idx) => {
       if (createdTeams[idx % calculatedTeams.length]) {
         assignments[player.id] = createdTeams[idx % calculatedTeams.length].id;
