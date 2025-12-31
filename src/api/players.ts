@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabaseClient';
+import { getSupabaseClient } from '../lib/supabaseClient';
 
 export interface Player {
   id: string;
@@ -20,6 +20,9 @@ export async function createPlayer(
   isHost: boolean = false
 ): Promise<Player | null> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+    
     const { data, error } = await supabase
       .from('players')
       .insert({
@@ -51,6 +54,9 @@ export async function joinPlayer(
   username: string
 ): Promise<Player | null> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+    
     // Check if player already exists (handles unique constraint)
     const { data: existing } = await supabase
       .from('players')
@@ -76,6 +82,9 @@ export async function joinPlayer(
  */
 export async function fetchPlayers(roomId: string): Promise<Player[]> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return [];
+    
     const { data, error } = await supabase
       .from('players')
       .select('*')
@@ -102,6 +111,9 @@ export async function updatePlayerTeam(
   teamId: string | null
 ): Promise<boolean> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
+    
     const { error } = await supabase
       .from('players')
       .update({ team_id: teamId })
@@ -127,6 +139,9 @@ export async function fetchPlayersByTeam(
   teamId: string
 ): Promise<Player[]> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return [];
+    
     const { data, error } = await supabase
       .from('players')
       .select('*')

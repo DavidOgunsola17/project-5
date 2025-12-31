@@ -63,9 +63,11 @@ function AppContent() {
   // Fetch players when roomId changes and we're in lobby/host-config views
   useEffect(() => {
     if (roomId && (view === 'lobby' || view === 'host-config')) {
-      fetchPlayers(roomId);
+      fetchPlayers(roomId).catch(err => {
+        console.error('Error fetching players:', err);
+      });
     }
-  }, [roomId, view]);
+  }, [roomId, view, fetchPlayers]);
 
   // Keep generatePlayerNames for demo/fallback purposes
   const generatePlayerNames = (count) => {
@@ -129,7 +131,12 @@ function AppContent() {
     if (isHost && roomCode && !roomId) {
       const code = roomCode.toUpperCase();
       // Generate a temporary host ID (will be replaced when player is created)
-      const tempHostId = crypto.randomUUID();
+      // Use a simple UUID-like string generator for compatibility
+      const tempHostId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
       const room = await createOrJoinRoom(code, tempHostId, null, topicInput || null, pack);
       if (room) {
         // Create host player with a default name if username not set

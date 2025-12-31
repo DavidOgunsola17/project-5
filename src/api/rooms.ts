@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabaseClient';
+import { getSupabaseClient } from '../lib/supabaseClient';
 
 export interface Room {
   id: string;
@@ -39,6 +39,9 @@ export async function createRoom(
   contentPack?: any
 ): Promise<Room | null> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+    
     const { data, error } = await supabase
       .from('rooms')
       .insert({
@@ -69,6 +72,9 @@ export async function createRoom(
  */
 export async function joinRoom(roomCode: string): Promise<Room | null> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+    
     const { data, error } = await supabase
       .from('rooms')
       .select('*')
@@ -92,6 +98,9 @@ export async function joinRoom(roomCode: string): Promise<Room | null> {
  */
 export async function fetchRoom(roomId: string): Promise<Room | null> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+    
     const { data, error } = await supabase
       .from('rooms')
       .select('*')
@@ -118,6 +127,9 @@ export async function updateRoomStatus(
   status: string
 ): Promise<boolean> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
+    
     const { error } = await supabase
       .from('rooms')
       .update({ status })
@@ -150,6 +162,9 @@ export async function updateRoomConfig(
   }
 ): Promise<boolean> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
+    
     const { error } = await supabase
       .from('rooms')
       .update(config)
@@ -172,6 +187,9 @@ export async function updateRoomConfig(
  */
 export async function fetchGameState(roomId: string): Promise<GameState | null> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+    
     const { data, error } = await supabase
       .from('game_state')
       .select('*')
@@ -212,6 +230,9 @@ export async function updateGameState(
   try {
     // First check if game state exists
     const existing = await fetchGameState(roomId);
+
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
 
     if (existing) {
       // Update existing

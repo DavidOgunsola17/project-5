@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabaseClient';
+import { getSupabaseClient } from '../lib/supabaseClient';
 
 export interface Team {
   id: string;
@@ -30,6 +30,9 @@ export async function createTeams(
 ): Promise<Team[]> {
   try {
     const teams: Team[] = [];
+
+    const supabase = getSupabaseClient();
+    if (!supabase) return [];
 
     for (let i = 0; i < teamCount; i++) {
       const { data, error } = await supabase
@@ -66,6 +69,9 @@ export async function createTeams(
  */
 export async function fetchTeams(roomId: string): Promise<Team[]> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return [];
+    
     const { data, error } = await supabase
       .from('teams')
       .select('*')
@@ -92,6 +98,9 @@ export async function updateTeamName(
   customName: string
 ): Promise<boolean> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
+    
     const { error } = await supabase
       .from('teams')
       .update({ custom_name: customName })
@@ -117,6 +126,9 @@ export async function updateTeamScore(
   score: number
 ): Promise<boolean> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
+    
     const { error } = await supabase
       .from('teams')
       .update({ score })
@@ -143,6 +155,9 @@ export async function assignPlayersToTeams(
   assignments: Record<string, string | null>
 ): Promise<boolean> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
+    
     const updates = Object.entries(assignments).map(([playerId, teamId]) =>
       supabase
         .from('players')
@@ -175,6 +190,9 @@ export async function saveTeamNameSuggestion(
   suggestedName: string
 ): Promise<boolean> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
+    
     const { error } = await supabase.from('team_names').upsert(
       {
         team_id: teamId,
@@ -205,6 +223,9 @@ export async function fetchTeamNameSuggestions(
   teamId: string
 ): Promise<TeamNameSuggestion[]> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return [];
+    
     const { data, error } = await supabase
       .from('team_names')
       .select('*')

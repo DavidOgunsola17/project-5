@@ -31,6 +31,7 @@ interface RoomContextType {
     game_mode?: string;
     topic?: string;
     content_pack?: any;
+    host_id?: string;
   }) => Promise<boolean>;
   fetchGameState: () => Promise<void>;
   updateGameState: (state: {
@@ -142,6 +143,7 @@ export function RoomProvider({ children }: { children: ReactNode }) {
       game_mode?: string;
       topic?: string;
       content_pack?: any;
+      host_id?: string;
     }): Promise<boolean> => {
       if (!roomId) return false;
       const success = await roomAPI.updateRoomConfig(roomId, config);

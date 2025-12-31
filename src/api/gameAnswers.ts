@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabaseClient';
+import { getSupabaseClient } from '../lib/supabaseClient';
 
 // TODO Phase 2: Realtime will auto-update via subscriptions, manual fetch only for initial load
 
@@ -15,6 +15,9 @@ export async function savePopQuizAnswer(
   isCorrect: boolean
 ): Promise<boolean> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
+    
     const { error } = await supabase.from('pop_quiz_answers').upsert(
       {
         room_id: roomId,
@@ -50,6 +53,9 @@ export async function fetchPopQuizAnswers(
   roundNumber?: number
 ): Promise<any[]> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return [];
+    
     let query = supabase
       .from('pop_quiz_answers')
       .select('*')
@@ -86,6 +92,9 @@ export async function saveSecretPhraseGuess(
   isCorrect: boolean
 ): Promise<boolean> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
+    
     const { error } = await supabase.from('secret_phrase_guesses').insert({
       room_id: roomId,
       player_id: playerId,
@@ -116,6 +125,9 @@ export async function fetchSecretPhraseGuesses(
   roundNumber?: number
 ): Promise<any[]> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return [];
+    
     let query = supabase
       .from('secret_phrase_guesses')
       .select('*')
@@ -151,6 +163,9 @@ export async function saveSecretPhraseClue(
   timeLeft: number
 ): Promise<boolean> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
+    
     const { error } = await supabase.from('secret_phrase_clues').upsert(
       {
         room_id: roomId,
@@ -185,6 +200,9 @@ export async function fetchSecretPhraseClues(
   roundNumber: number
 ): Promise<any[]> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return [];
+    
     const { data, error } = await supabase
       .from('secret_phrase_clues')
       .select('*')
@@ -216,6 +234,9 @@ export async function saveSyncAnswer(
   selectedAnswer: number
 ): Promise<boolean> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
+    
     const { error } = await supabase.from('sync_answers').upsert(
       {
         room_id: roomId,
@@ -250,6 +271,9 @@ export async function fetchSyncAnswers(
   roundNumber?: number
 ): Promise<any[]> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return [];
+    
     let query = supabase
       .from('sync_answers')
       .select('*')
@@ -283,6 +307,9 @@ export async function saveGroupPulseResponse(
   answerIndex: number
 ): Promise<boolean> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
+    
     const { error } = await supabase.from('group_pulse_responses').upsert(
       {
         room_id: roomId,
@@ -312,6 +339,9 @@ export async function saveGroupPulseResponse(
  */
 export async function fetchGroupPulseResponses(roomId: string): Promise<any[]> {
   try {
+    const supabase = getSupabaseClient();
+    if (!supabase) return [];
+    
     const { data, error } = await supabase
       .from('group_pulse_responses')
       .select('*')
