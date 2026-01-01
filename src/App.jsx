@@ -15,6 +15,7 @@ import { RoomProvider, useRoom } from './contexts/RoomContext';
 import { PlayerProvider, usePlayer } from './contexts/PlayerContext';
 import { generateRoomCode } from './lib/utils';
 import * as teamsAPI from './api/teams';
+import { getSupabaseClient } from './lib/supabaseClient';
 
 function AppContent() {
   const { roomId, roomCode: contextRoomCode, roomStatus, roomConfig, createOrJoinRoom, joinRoom, updateRoomStatus, updateRoomConfig, fetchRoom, clearRoom } = useRoom();
@@ -68,6 +69,79 @@ function AppContent() {
       });
     }
   }, [roomId, view, fetchPlayers]);
+
+  // Subscribe to player list changes via Supabase realtime
+  useEffect(() => {
+    if (!roomId) return;
+
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+
+    const channel = supabase
+      .channel(`players:${roomId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // INSERT, UPDATE, DELETE
+          schema: 'public',
+          table: 'players',
+          filter: `room_id=eq.${roomId}`,
+        },
+        () => {
+          // Refetch player list to get latest state
+          fetchPlayers(roomId).catch(err => {
+            console.error('Error fetching players after realtime update:', err);
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [roomId, fetchPlayers]);
+
+  // Navigation effect: respond to roomStatus changes with readiness guards
+  useEffect(() => {
+    if (!roomId || !roomStatus) return;
+
+    // Don't navigate away from game screens
+    if (view === 'game') return;
+
+    // Readiness guards: ensure required state is present before navigation
+    if (roomStatus === 'team-assignment') {
+      // For team-assignment, we need gameMode and contentPack synced
+      if (!gameMode || !contentPack) {
+        // If not synced yet, fetch room to get latest config
+        fetchRoom().then(() => {
+          // After fetch, check again - this will re-trigger the effect
+          // The sync effect above will update gameMode/contentPack from roomConfig
+        });
+        return;
+      }
+    }
+
+    // Navigation logic based on status
+    if (roomStatus === 'waiting') {
+      // Only navigate if we're not already in the correct view
+      if (view !== 'lobby' && view !== 'host-config') {
+        setView(isHost ? 'host-config' : 'lobby');
+      }
+    } else if (roomStatus === 'team-assignment') {
+      if (isHost) {
+        if (view !== 'host-observing') {
+          setView('host-observing');
+        }
+      } else {
+        // For players, ensure we have required data before navigating
+        if (gameMode && contentPack && view !== 'team-assignment') {
+          setView('team-assignment');
+        }
+      }
+    } else if (roomStatus === 'ended') {
+      handleEndGame();
+    }
+  }, [roomStatus, roomId, isHost, gameMode, contentPack, view, fetchRoom]);
 
   // Keep generatePlayerNames for demo/fallback purposes
   const generatePlayerNames = (count) => {

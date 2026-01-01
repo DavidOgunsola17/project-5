@@ -1,6 +1,7 @@
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
 import * as roomAPI from '../api/rooms';
 import type { Room, GameState } from '../api/rooms';
+import { getSupabaseClient } from '../lib/supabaseClient';
 
 interface RoomContextType {
   roomId: string | null;
@@ -212,6 +213,35 @@ export function RoomProvider({ children }: { children: ReactNode }) {
     setGameState(null);
   }, []);
 
+  // Subscribe to room updates via Supabase realtime
+  useEffect(() => {
+    if (!roomId) return;
+
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+
+    const channel = supabase
+      .channel(`room:${roomId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'rooms',
+          filter: `id=eq.${roomId}`,
+        },
+        () => {
+          // Refetch room data to get latest state
+          fetchRoom();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [roomId, fetchRoom]);
+
   return (
     <RoomContext.Provider
       value={{
@@ -242,19 +272,4 @@ export function useRoom() {
   }
   return context;
 }
-
-// TODO Phase 2: Add Supabase channel subscription for room updates
-// Example:
-// useEffect(() => {
-//   if (!roomId) return;
-//   const channel = supabase
-//     .channel(`room:${roomId}`)
-//     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${roomId}` }, (payload) => {
-//       // Update room state from realtime changes
-//     })
-//     .subscribe();
-//   return () => {
-//     supabase.removeChannel(channel);
-//   };
-// }, [roomId]);
 
