@@ -25,7 +25,7 @@ interface RoomContextType {
   ) => Promise<Room | null>;
   joinRoom: (roomCode: string) => Promise<Room | null>;
   fetchRoom: () => Promise<void>;
-  updateRoomStatus: (status: string) => Promise<boolean>;
+  updateRoomStatus: (status: string, playerId: string | null) => Promise<boolean>;
   updateRoomConfig: (config: {
     team_size?: number;
     target_score?: number;
@@ -126,15 +126,20 @@ export function RoomProvider({ children }: { children: ReactNode }) {
   }, [roomId]);
 
   const updateRoomStatus = useCallback(
-    async (status: string): Promise<boolean> => {
+    async (status: string, playerId: string | null): Promise<boolean> => {
       if (!roomId) return false;
+      // Host-only guard: only allow status update if playerId matches hostId
+      if (playerId !== roomConfig.hostId) {
+        console.warn('Only the host can update room status');
+        return false;
+      }
       const success = await roomAPI.updateRoomStatus(roomId, status);
       if (success) {
         setRoomStatus(status);
       }
       return success;
     },
-    [roomId]
+    [roomId, roomConfig.hostId]
   );
 
   const updateRoomConfig = useCallback(

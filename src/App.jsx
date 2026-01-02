@@ -108,40 +108,42 @@ function AppContent() {
     // Don't navigate away from game screens
     if (view === 'game') return;
 
-    // Readiness guards: ensure required state is present before navigation
-    if (roomStatus === 'team-assignment') {
-      // For team-assignment, we need gameMode and contentPack synced
-      if (!gameMode || !contentPack) {
-        // If not synced yet, fetch room to get latest config
-        fetchRoom().then(() => {
-          // After fetch, check again - this will re-trigger the effect
-          // The sync effect above will update gameMode/contentPack from roomConfig
-        });
-        return;
-      }
-    }
-
     // Navigation logic based on status
     if (roomStatus === 'waiting') {
       // Only navigate if we're not already in the correct view
       if (view !== 'lobby' && view !== 'host-config') {
         setView(isHost ? 'host-config' : 'lobby');
       }
-    } else if (roomStatus === 'team-assignment') {
-      if (isHost) {
-        if (view !== 'host-observing') {
-          setView('host-observing');
+    } else if (roomStatus === 'group_pulse') {
+      // For group_pulse, we need teams + players (no game content required)
+      if (teamData.length > 0 && players.length > 0) {
+        if (view !== 'group-pulse') {
+          setView('group-pulse');
         }
       } else {
-        // For players, ensure we have required data before navigating
-        if (gameMode && contentPack && view !== 'team-assignment') {
-          setView('team-assignment');
-        }
+        // Fetch room and teams if needed
+        fetchRoom().then(() => {
+          fetchPlayers(roomId);
+        });
       }
-    } else if (roomStatus === 'ended') {
-      handleEndGame();
+    } else if (roomStatus === 'playing') {
+      // For playing, we need gameMode + contentPack + teams
+      if (!gameMode || !contentPack || teamData.length === 0) {
+        // Fetch room to get latest config
+        fetchRoom().then(() => {
+          // After fetch, check again - this will re-trigger the effect
+        });
+        return;
+      }
+      if (view !== 'game') {
+        setView('game');
+      }
+    } else if (roomStatus === 'finished') {
+      // Game finished - the game component handles showing results
+      // When user clicks "Return Home", handleEndGame is called which clears state
+      // No action needed here - game component is already showing results
     }
-  }, [roomStatus, roomId, isHost, gameMode, contentPack, view, fetchRoom]);
+  }, [roomStatus, roomId, isHost, gameMode, contentPack, view, fetchRoom, teamData, players, fetchPlayers]);
 
   // Keep generatePlayerNames for demo/fallback purposes
   const generatePlayerNames = (count) => {
@@ -246,7 +248,7 @@ function AppContent() {
 
     // Update room config and status
     await updateRoomConfig({ team_size: teamSize, target_score: targetScore });
-    await updateRoomStatus('team-assignment');
+    await updateRoomStatus('group_pulse', playerId);
 
     // Fetch current players
     await fetchPlayers(roomId);
@@ -259,8 +261,8 @@ function AppContent() {
     // Assign players to teams
     const assignments = {};
     currentPlayers.forEach((player, idx) => {
-      if (createdTeams[idx % calculatedTeams.length]) {
-        assignments[player.id] = createdTeams[idx % calculatedTeams.length].id;
+      if (createdTeams[idx % createdTeams.length]) {
+        assignments[player.id] = createdTeams[idx % createdTeams.length].id;
       }
     });
     await teamsAPI.assignPlayersToTeams(roomId, assignments);
@@ -283,57 +285,7 @@ function AppContent() {
     });
 
     setTeamData(formattedTeams);
-    setView('host-observing');
-  };
-
-  const handlePlayerStartSession = async () => {
-    sounds.transition();
-
-    if (!roomId) return;
-
-    // Fetch room to get gameMode and contentPack
-    await fetchRoom();
-    if (roomConfig.gameMode) {
-      setGameMode(roomConfig.gameMode);
-    }
-    if (roomConfig.contentPack) {
-      setContentPack(roomConfig.contentPack);
-    }
-
-    // Fallback to defaults if not set
-    if (!gameMode) {
-      setGameMode('pop-quiz');
-    }
-    if (!contentPack) {
-      const pack = selectContentPack('');
-      setContentPack(pack);
-    }
-
-    // Fetch players and teams
-    await fetchPlayers(roomId);
-    const teams = await teamsAPI.fetchTeams(roomId);
-
-    // Format team data for UI
-    const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
-    const formattedTeams = teams.map((team, idx) => {
-      const teamPlayers = contextPlayers.filter(p => p.team_id === team.id);
-      return {
-        name: team.custom_name || team.original_name,
-        originalName: team.original_name,
-        players: teamPlayers.map(p => p.username),
-        color: TEAM_COLORS[idx % TEAM_COLORS.length],
-        id: team.id,
-      };
-    });
-
-    // Find player's team
-    const playerTeam = teams.find(t => t.id === teamId);
-    if (playerTeam) {
-      setAssignedTeam(playerTeam.custom_name || playerTeam.original_name);
-    }
-
-    setTeamData(formattedTeams);
-    setView('team-assignment');
+    // Navigation will happen via roomStatus effect
   };
 
   const handleTeamAssignmentContinue = () => {
@@ -349,27 +301,18 @@ function AppContent() {
 
   const handleGroupPulseComplete = () => {
     sounds.success();
-    setView('leaderboard');
+    // Host only: advance room status to playing
+    if (isHost && roomId) {
+      updateRoomStatus('playing', playerId);
+    }
+    // Players will react to status change via navigation effect
   };
 
-  const handleLeaderboardContinue = () => {
-    sounds.gameStart();
-    // Ensure gameMode and contentPack are set before starting game
-    // (in real app, these would be synced from host)
-    if (!gameMode) {
-      setGameMode('pop-quiz'); // Default game mode
-    }
-    if (!contentPack) {
-      const pack = selectContentPack('');
-      setContentPack(pack);
-    }
-    setView('game');
-  };
 
   const handleEndGame = () => {
     sounds.gameEnd();
-    if (roomId) {
-      updateRoomStatus('ended');
+    if (roomId && isHost) {
+      updateRoomStatus('finished', playerId);
     }
     clearRoom();
     clearPlayer();
@@ -565,12 +508,6 @@ function AppContent() {
                 </div>
               </div>
 
-              <div className="text-center text-sm text-gray-600 mb-4 font-medium">
-                <p>Demo: Preview what happens when host starts</p>
-              </div>
-              <Button size="lg" onClick={handlePlayerStartSession} className="w-full">
-                Simulate Start
-              </Button>
             </Card>
           </motion.div>
         )}
@@ -871,13 +808,6 @@ function AppContent() {
                 ))}
               </div>
 
-              <div className="text-center text-sm text-gray-600 mb-4 font-medium">
-                <p>Demo: Skip to game control panel</p>
-              </div>
-
-              <Button size="lg" onClick={handleLeaderboardContinue} className="w-full mb-2">
-                Skip to Game
-              </Button>
               <Button
                 size="lg"
                 variant="danger"
@@ -926,7 +856,7 @@ function AppContent() {
         )}
 
         {view === 'group-pulse' && (
-          <GroupPulse onComplete={handleGroupPulseComplete} />
+          <GroupPulse onComplete={handleGroupPulseComplete} isHost={isHost} />
         )}
 
         {view === 'leaderboard' && (
@@ -966,9 +896,6 @@ function AppContent() {
                 ))}
               </div>
 
-              <Button size="lg" onClick={handleLeaderboardContinue} className="w-full">
-                Start Game
-              </Button>
             </Card>
           </motion.div>
         )}

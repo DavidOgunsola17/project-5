@@ -19,7 +19,7 @@ const PULSE_QUESTIONS = [
   },
 ];
 
-export function GroupPulse({ onComplete }) {
+export function GroupPulse({ onComplete, isHost = false }) {
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [answers, setAnswers] = useState([]);
   const [selectedOption, setSelectedOption] = useState(null);
@@ -101,9 +101,16 @@ export function GroupPulse({ onComplete }) {
             ))}
           </div>
 
-          <Button size="lg" onClick={handleComplete} className="w-full">
-            Start Playing
-          </Button>
+          {isHost && (
+            <Button size="lg" onClick={handleComplete} className="w-full">
+              Start Playing
+            </Button>
+          )}
+          {!isHost && (
+            <p className="text-gray-600 font-medium">
+              Waiting for host to start the game...
+            </p>
+          )}
         </Card>
       </motion.div>
     );
