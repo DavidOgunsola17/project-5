@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from './components/Button';
 import { Card } from './components/Card';
@@ -15,6 +15,7 @@ import { RoomProvider, useRoom } from './contexts/RoomContext';
 import { PlayerProvider, usePlayer } from './contexts/PlayerContext';
 import { generateRoomCode } from './lib/utils';
 import * as teamsAPI from './api/teams';
+import * as playersAPI from './api/players';
 import { getSupabaseClient } from './lib/supabaseClient';
 
 function AppContent() {
@@ -36,6 +37,12 @@ function AppContent() {
   const [customTeamNames, setCustomTeamNames] = useState({});
   const [soundOn, setSoundOn] = useState(true);
 
+  // Single source of truth: filter host once, use everywhere
+  // uiPlayers = all players EXCEPT host (for UI and team logic)
+  const uiPlayers = useMemo(() => {
+    return contextPlayers.filter(p => !p.is_host && p.id !== roomConfig.hostId);
+  }, [contextPlayers, roomConfig.hostId]);
+
   // Sync context values to local state for UI compatibility
   useEffect(() => {
     if (contextRoomCode) {
@@ -56,10 +63,10 @@ function AppContent() {
     if (roomConfig.targetScore) {
       setTargetScore(roomConfig.targetScore);
     }
-    if (contextPlayers.length > 0) {
-      setPlayers(contextPlayers.map(p => p.username));
+    if (uiPlayers.length > 0) {
+      setPlayers(uiPlayers.map(p => p.username));
     }
-  }, [contextRoomCode, contextIsHost, roomConfig, contextPlayers]);
+  }, [contextRoomCode, contextIsHost, roomConfig, uiPlayers]);
 
   // Fetch players when roomId changes and we're in lobby/host-config views
   useEffect(() => {
@@ -250,15 +257,19 @@ function AppContent() {
     await updateRoomConfig({ team_size: teamSize, target_score: targetScore });
     await updateRoomStatus('group_pulse', playerId);
 
-    // Fetch current players
+    // Fetch current players directly from API to get fresh data
+    const allPlayers = await playersAPI.fetchPlayers(roomId);
+    // Filter out host - host is not a participant (same filter as uiPlayers)
+    const currentPlayers = allPlayers.filter(p => !p.is_host && p.id !== roomConfig.hostId);
+    
+    // Also update context for UI (will update uiPlayers via useMemo)
     await fetchPlayers(roomId);
-    const currentPlayers = contextPlayers.length > 0 ? contextPlayers : [];
 
     // Create teams
     const calculatedNumTeams = calculateNumTeams(currentPlayers.length || 12, teamSize);
     const createdTeams = await teamsAPI.createTeams(roomId, calculatedNumTeams, teamSize);
     
-    // Assign players to teams
+    // Assign players to teams (only non-host players)
     const assignments = {};
     currentPlayers.forEach((player, idx) => {
       if (createdTeams[idx % createdTeams.length]) {
@@ -269,12 +280,15 @@ function AppContent() {
 
     // Fetch teams and players again
     const teams = await teamsAPI.fetchTeams(roomId);
-    await fetchPlayers(roomId);
+    const updatedPlayers = await playersAPI.fetchPlayers(roomId);
+    // Filter out host from updated players list
+    const nonHostPlayers = updatedPlayers.filter(p => !p.is_host && p.id !== roomConfig.hostId);
+    await fetchPlayers(roomId); // Update context
 
     // Format team data for UI
     const TEAM_COLORS = ['bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-red-500'];
     const formattedTeams = teams.map((team, idx) => {
-      const teamPlayers = contextPlayers.filter(p => p.team_id === team.id);
+      const teamPlayers = nonHostPlayers.filter(p => p.team_id === team.id);
       return {
         name: team.custom_name || team.original_name,
         originalName: team.original_name,
