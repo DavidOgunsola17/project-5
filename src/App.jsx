@@ -23,7 +23,10 @@ function AppContent() {
   const { playerId, playerName, isHost: contextIsHost, teamId, players: contextPlayers, createOrJoinPlayer, joinPlayer, fetchPlayers, clearPlayer } = usePlayer();
 
   const [view, setView] = useState('landing');
-  const [isHost, setIsHost] = useState(false);
+  // Derive isHost from room ownership - authoritative source
+  const isHost = useMemo(() => {
+    return playerId !== null && roomConfig.hostId !== null && playerId === roomConfig.hostId;
+  }, [playerId, roomConfig.hostId]);
   const [gameMode, setGameMode] = useState(null);
   const [username, setUsername] = useState('');
   const [roomCode, setRoomCode] = useState('');
@@ -48,9 +51,7 @@ function AppContent() {
     if (contextRoomCode) {
       setRoomCode(contextRoomCode);
     }
-    if (contextIsHost !== undefined) {
-      setIsHost(contextIsHost);
-    }
+    // isHost is now derived from roomConfig.hostId, not synced from contextIsHost
     if (roomConfig.gameMode) {
       setGameMode(roomConfig.gameMode);
     }
@@ -66,7 +67,7 @@ function AppContent() {
     if (uiPlayers.length > 0) {
       setPlayers(uiPlayers.map(p => p.username));
     }
-  }, [contextRoomCode, contextIsHost, roomConfig, uiPlayers]);
+  }, [contextRoomCode, roomConfig, uiPlayers]);
 
   // Fetch players when roomId changes and we're in lobby/host-config views
   useEffect(() => {
@@ -166,7 +167,7 @@ function AppContent() {
 
   const handleHostGame = async () => {
     sounds.tap();
-    setIsHost(true);
+    // isHost will be derived once room is created with host_id
     const code = generateRoomCode();
     setRoomCode(code);
     // Room and host player will be created after topic selection
@@ -184,7 +185,7 @@ function AppContent() {
     }
     
     sounds.success();
-    setIsHost(false);
+    // isHost will be derived from roomConfig.hostId (will be false for non-host players)
 
     // Join room by code
     const room = await joinRoom(roomCode.toUpperCase());
@@ -332,7 +333,7 @@ function AppContent() {
     clearPlayer();
     setView('landing');
     setGameMode(null);
-    setIsHost(false);
+    // isHost will be derived from roomConfig.hostId (will be false when room/player cleared)
     setUsername('');
     setRoomCode('');
     setPlayers([]);
