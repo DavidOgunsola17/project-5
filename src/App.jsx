@@ -211,7 +211,9 @@ function AppContent() {
     setContentPack(pack);
     
     // Create room and host player after topic is selected
-    if (isHost && roomCode && !roomId) {
+    // Note: isHost check removed - this is only called from host flow (topic-select view)
+    // and isHost requires room/player to exist, creating a chicken-and-egg problem
+    if (roomCode && !roomId) {
       const code = roomCode.toUpperCase();
       // Generate a temporary host ID (will be replaced when player is created)
       // Use a simple UUID-like string generator for compatibility
