@@ -64,9 +64,8 @@ function AppContent() {
     if (roomConfig.targetScore) {
       setTargetScore(roomConfig.targetScore);
     }
-    if (uiPlayers.length > 0) {
-      setPlayers(uiPlayers.map(p => p.username));
-    }
+    // Always sync, even if empty (clears stale data)
+    setPlayers(uiPlayers.map(p => p.username));
   }, [contextRoomCode, roomConfig, uiPlayers]);
 
   // Fetch players when roomId changes and we're in lobby/host-config views
@@ -229,6 +228,8 @@ function AppContent() {
         if (hostPlayer) {
           // Update room with actual host_id
           await updateRoomConfig({ host_id: hostPlayer.id, topic: topicInput || null, content_pack: pack });
+          // Refresh room config to ensure roomConfig.hostId is updated in context
+          await fetchRoom();
         }
       }
     }
@@ -694,19 +695,13 @@ function AppContent() {
                       >
                         {player}
                       </motion.div>
-                    )) : generatePlayerNames(12).map((player, idx) => (
-                      <motion.div
-                        key={idx}
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: idx * 0.1 }}
-                        className="p-2 bg-white rounded-xl text-sm text-gray-700 font-medium"
-                      >
-                        {player}
-                      </motion.div>
-                    ))}
+                    )) : (
+                      <div className="col-span-full p-4 text-center text-gray-500 text-sm font-medium">
+                        Waiting for players to join...
+                      </div>
+                    )}
                   </div>
-                  <p className="text-sm text-gray-800 text-center font-bold">{players.length || 12} players connected</p>
+                  <p className="text-sm text-gray-800 text-center font-bold">{players.length} players connected</p>
                 </Card>
 
                 <div>
